@@ -152,7 +152,6 @@ TFT_eSPI tft = TFT_eSPI();
 const char daysOfTheWeekFull[7][10] = {"Sunday   ", "Monday   ", "Tuesday  ", "Wednesday", "Thursday ", "Friday   ", "Saturday "};
 const char daysOfTheWeekShort[7][4] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
 
-
 //////////////////////////////////////////////////////
 //
 //                UTILITY FUNCTIONS
@@ -323,7 +322,6 @@ void multiClick() {
   }
 
 } // multiClick
-
 
 // this function will be called when the button was held down for 1 second or more.
 void pressStart() {
@@ -597,7 +595,6 @@ void setup(){
 //////////////////////////////////////////////////////
 
 void loop(){
-  
   if(refreshTime){
     refreshTimeFromRTC();
     refreshTime = false;
@@ -629,27 +626,35 @@ void loop(){
 
     tft.setTextFont(1);
     tft.setTextSize(1);
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+2);
     tft.print(F("BMP 'C : "));
     printTemp();
     tft.println();
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.print(F("Press mb : "));
     printPressure();
     tft.println();
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.print(F("Humid Rh : "));
     printHumidity();
     tft.println();
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.print(F("AHT 'C : "));
     printTemp(true);
     tft.println();
 
     char tempStr[17];
     sprintf(tempStr,"%s%.2f","Temp 'C : ",currentTempAPI);
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.println(tempStr);
     sprintf(tempStr,"%s%.2f","Feels 'C : ",currentFeelsLikeAPI);
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.println(tempStr);
     sprintf(tempStr,"%s%.2f","Press mb : ",currentPressAPI);
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.println(tempStr);
     sprintf(tempStr,"%s%.2f","Humid Rh : ", currentHumidityAPI);
+    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
     tft.println(tempStr);
     
 
