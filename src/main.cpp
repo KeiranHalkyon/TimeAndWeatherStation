@@ -42,40 +42,26 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <ESP8266Ping.h>
 #include <WiFiUdp.h>
 #include <WiFiClientSecureBearSSL.h>
-#include <ArduinoJson.h>
+#include <FS.h>
+#include <base64.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <ArduinoOTA.h>
 
+#include <ESP8266Ping.h>
+#include <ArduinoJson.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_AHTX0.h> 
 #include <NTPClient.h>
 #include "RTClib.h"
 #include "OneButton.h"
-#include "user_constants.hpp"
-
-// #define USER_SETUP_LOADED   
-// #define ST7735_DRIVER      
-// #define TFT_WIDTH 128         
-// #define TFT_HEIGHT 160
-// #define ST7735_ROBOTLCD     
-// #define TFT_MOSI 13			
-// #define TFT_SCLK 14
-// #define TFT_CS 0
-// #define TFT_DC 15             
-// #define TFT_RST 2             
-// #define LOAD_GLCD
-// #define LOAD_GLCD
-// #define LOAD_FONT2
-// #define LOAD_FONT4
-// #define LOAD_FONT6
-// #define LOAD_FONT7
-// //#define SMOOTH_FONT
-// //#define LOAD_GFXFF
-// #define SPI_FREQUENCY 27000000
-
+#include <TJpg_Decoder.h> 
 #include "TFT_eSPI.h"
+#include <Preferences.h>
 
+#include "user_constants.hpp"
 //////////////////////////////////////////////////////
 //
 //              GLOBAL VARIABLES
