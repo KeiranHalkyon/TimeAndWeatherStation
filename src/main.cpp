@@ -688,9 +688,11 @@ void loop(){
   if(min5over){
     //getApiWeather();
     //unsigned long time = millis();
-    if(checkInternet())
-      if(internetAvailable = getApiv3())
+    if(checkInternet()){
+      internetAvailable = getApiv3();
+      if(internetAvailable)
         min5over=false;
+    }
     //Serial.print("\nFinished in ");
     //Serial.println(millis()-time);
   }
