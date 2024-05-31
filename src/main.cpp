@@ -207,7 +207,7 @@ bool connectToWifi(bool waitForTimeout = true, unsigned long timeout = 500L){
   //timeout of 0(zero) means wait forever
   //waitForTimeout being false means donot wait, just begin connection and proceed
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(String(ssid), String(password));
   unsigned long lastTry = millis();
   while((timeout == 0 || millis() - lastTry > timeout) && waitForTimeout && WiFi.status() != WL_CONNECTED){
     delay(100);
@@ -334,16 +334,20 @@ bool sendDataToRDS(float tbmp, float pbmp,float taht, float haht){
   client->setInsecure();
   HTTPClient https;
 
-  String completeRequest = rdsUrl+"tempBMP="+String(tbmp,2)+"&pressBMP="+String(pbmp,2)+"&tempAHT="+String(taht,2)+"&humAHT="+String(haht,2);
+  //String completeRequest = rdsUrl+"tempBMP="+String(tbmp,2)+"&pressBMP="+String(pbmp,2)+"&tempAHT="+String(taht,2)+"&humAHT="+String(haht,2);
   //Serial.println(pbmp);
-  https.begin(*client, completeRequest.c_str());
-  https.addHeader("X-Api-Key", rdsApiKey);
+  char completeRequest[130];
+  sprintf(completeRequest, rdsUrl, tbmp, pbmp, taht, haht);
+
+  //https.begin(*client, completeRequest.c_str());
+  https.begin(*client, completeRequest);
+  https.addHeader("X-Api-Key", String(rdsApiKey));
   int responseCode = https.POST("");
 
   //Serial.printf("Response : %d\nMessage : %s\nTime taken in ms : %d",responseCode,https.getString().c_str(),millis()-times);
   return (responseCode == 200);
 }
-
+/*
 bool getApiWeather(){
   std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
@@ -383,16 +387,19 @@ bool getApiWeather(){
   }
   return (httpCode == 200);
 }
-
+*/
 bool getApiv3() {
   std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
   HTTPClient https;
   int httpCode = -1;
 
-  String completeRequest = openWeatherUrl + "3.0/onecall?appid=" + openWeatherApiKey + "&lat=22.5064&lon=88.2999&units=metric&exclude=minutely";
+  //String completeRequest = openWeatherUrl + "3.0/onecall?appid=" + openWeatherApiKey + "&lat=22.5064&lon=88.2999&units=metric&exclude=minutely";
   //Serial.println(ESP.getFreeHeap(),DEC);
-  if (https.begin(*client, completeRequest.c_str())) {  
+  char completeRequest [145];
+  sprintf(completeRequest, openWeatherUrl, openWeatherApiKey, F("22.5064"), F("88.2999"));
+  //if (https.begin(*client, completeRequest.c_str())) {  
+  if (https.begin(*client, completeRequest)) {  
     Serial.print("[HTTPS] GET...\n");
     httpCode = https.GET();
     // httpCode will be negative on error
@@ -497,7 +504,7 @@ bool checkInternet(){
     return true;
   else if(WiFi.isConnected() && (myAbs(millis()-lastInternetRefresh) > checkInternetInterval || !rtc.isrunning())){
     lastInternetRefresh = millis();
-    return internetAvailable = Ping.ping(remote_host,1);
+    return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
   }
   else
     return false;
@@ -542,9 +549,6 @@ void setup(){
   analogWrite(tftPow,tftBrightness);
 
   //initiate TFT display
-  // displayTFT.begin();
-  // displayTFT.fill(0x00);
-  // displayTFT.setFixedFont(ssd1306xled_font6x8);
 
   tft.init();
   tft.setRotation(2);
@@ -572,6 +576,8 @@ void setup(){
 
   if(rtc.readSqwPinMode() != DS1307_SquareWave1HZ)
     rtc.writeSqwPinMode(DS1307_SquareWave1HZ);
+  
+  
 }//setup
 
 //////////////////////////////////////////////////////
