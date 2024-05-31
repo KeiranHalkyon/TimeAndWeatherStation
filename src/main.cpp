@@ -100,7 +100,8 @@ const uint16_t displayUpdatet = 500/500,
          min1timer = 60000/500,
          min5timer = 300000/500;
 
-uint8_t fontSelect = 1,
+uint8_t currDisplayFace = 1,
+        prevDisplayFace = 1,
         tftBrightness = 30,
         rotation = 0;
 
@@ -510,6 +511,58 @@ bool checkInternet(){
     return false;
 }
 
+void displayFace1(){
+  // uint16_t ypos = 0;
+  //tft.fillScreen(TFT_BLACK);
+  tft.setCursor(2,0);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextFont(6);
+  tft.setTextSize(1);
+
+  printTime();
+  tft.println();
+  tft.setTextFont(1);
+  //tft.setCursor(tft.getCursorX(),tft.getCursorY()-10);
+  tft.setTextSize(2);
+  printDate();
+  tft.println();
+  printDay();
+  tft.println();
+
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+2);
+  tft.print(F("BMP 'C : "));
+  printTemp();
+  tft.println();
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.print(F("Press mb : "));
+  printPressure();
+  tft.println();
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.print(F("Humid Rh : "));
+  printHumidity();
+  tft.println();
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.print(F("AHT 'C : "));
+  printTemp(true);
+  tft.println();
+
+  char tempStr[17];
+  sprintf(tempStr,"%s%.2f","Temp 'C : ",currentTempAPI);
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.println(tempStr);
+  sprintf(tempStr,"%s%.2f","Feels 'C : ",currentFeelsLikeAPI);
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.println(tempStr);
+  sprintf(tempStr,"%s%.2f","Press mb : ",currentPressAPI);
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.println(tempStr);
+  sprintf(tempStr,"%s%.2f","Humid Rh : ", currentHumidityAPI);
+  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
+  tft.println(tempStr);
+}
+
 //////////////////////////////////////////////////////
 //
 //                SETUP
@@ -598,58 +651,22 @@ void loop(){
   }
   button.tick();
   if(refreshDisplay){
-    // uint16_t ypos = 0;
-
-    //tft.fillScreen(TFT_BLACK);
-    tft.setCursor(2,0);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setTextFont(6);
-    tft.setTextSize(1);
-
-    printTime();
-    tft.println();
-    tft.setTextFont(1);
-    //tft.setCursor(tft.getCursorX(),tft.getCursorY()-10);
-    tft.setTextSize(2);
-    printDate();
-    tft.println();
-    printDay();
-    tft.println();
-
-    tft.setTextFont(1);
-    tft.setTextSize(1);
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+2);
-    tft.print(F("BMP 'C : "));
-    printTemp();
-    tft.println();
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.print(F("Press mb : "));
-    printPressure();
-    tft.println();
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.print(F("Humid Rh : "));
-    printHumidity();
-    tft.println();
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.print(F("AHT 'C : "));
-    printTemp(true);
-    tft.println();
-
-    char tempStr[17];
-    sprintf(tempStr,"%s%.2f","Temp 'C : ",currentTempAPI);
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.println(tempStr);
-    sprintf(tempStr,"%s%.2f","Feels 'C : ",currentFeelsLikeAPI);
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.println(tempStr);
-    sprintf(tempStr,"%s%.2f","Press mb : ",currentPressAPI);
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.println(tempStr);
-    sprintf(tempStr,"%s%.2f","Humid Rh : ", currentHumidityAPI);
-    tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-    tft.println(tempStr);
+    switch (currDisplayFace)
+    {
+    case 1:
+      if(currDisplayFace != prevDisplayFace){
+        prevDisplayFace = currDisplayFace;
+        tft.fillScreen(TFT_BLACK);
+      }
+      displayFace1();
+      break;
     
-
+    case 2:
+      break;
+    
+    case 3:
+      break;
+    }
     refreshDisplay = false;
   }
 
@@ -679,7 +696,7 @@ void loop(){
   }
 
   button.tick();
-  delay(20);
+  //delay(20);
   //Serial.println(ticks);
 }
 
