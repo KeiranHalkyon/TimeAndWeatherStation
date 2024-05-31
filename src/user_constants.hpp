@@ -10,4 +10,9 @@ const char PROGMEM rdsUrl[] = R"deli(https://AWS_URL?tempBMP=%0.2f&pressBMP=%0.2
         rdsApiKey[] = "API_KEY",                                       //API key for our lambda API in AWS
         openWeatherApiKey[] = "API_KEY";                                               //API key for Open Weather Map
 
+//get and set the following from spotify console
+const char PROGMEM CLIENT_ID[] = "SPOTIFY_CLIENT_ID", 
+        CLIENT_SECRET[] = "SPOTIFY_CLIENT_SECRET",
+        REDIRECT_URI[] = "SPOTIFY_REDIRECT_URI";
+
 #endif
