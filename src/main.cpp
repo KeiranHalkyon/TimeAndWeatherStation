@@ -1366,13 +1366,20 @@ void displayFace1(){
   
   if(spotifyConnection.stateChanged){
     tft.fillScreen(bg);
+    tft.setTextColor(color, bg, true);
+    tft.loadFont("leelawad12", LittleFS);
+    tft.setTextDatum(BL_DATUM);
+    tft.setTextWrap(true);
+    tft.setCursor(0,85);
+
     if(!spotifyConnection.accessTokenSet){
       printSplitString("Spotify not logged in",19,95);
     }
     else if(!spotifyConnection.isAvailable){
       printSplitString("Not connected or Nothing Playing",19,95);
     }
-    else if(spotifyConnection.songChanged){
+    //else if(spotifyConnection.songChanged){
+    else{
       if (LittleFS.exists("/albumArt.jpg") == true) { 
         TJpgDec.setSwapBytes(true);
         uint16_t xpos = 53, ypos = 0;
@@ -1385,35 +1392,36 @@ void displayFace1(){
         tft.drawRect(xpos+2, ypos+2, 71, 71, bg);
         tft.drawRect(xpos+3, ypos+3, 69, 69, 0x8C8B); //6691
       }
-      tft.setTextDatum(BL_DATUM);
-      tft.setTextWrap(true);
-      tft.setCursor(0,85);
-      tft.setTextColor(color, bg);
-
-      tft.loadFont("leelawad12", LittleFS);
-      //tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      
       printSplitString(spotifyConnection.currentSong.artist,19,95); //15 was 20
       // tft.drawString(currentSong.artist, tft.width() / 2, 10);
       tft.setCursor(0, tft.getCursorY() + 5);
       printSplitString(spotifyConnection.currentSong.song,19,130);  //15 was 20
-      tft.unloadFont();
       spotifyConnection.songChanged = false;
     }
-    spotifyConnection.stateChanged = false;
+    tft.unloadFont();
   }
-  char hour[3] = "00", min[3] = "00";
-  hour[0] = '0' + now.hour() / 10;
-  hour[1] = '0' + now.hour() % 10;
-  min[0] = '0' + now.minute() / 10;
-  min[1] = '0' + now.minute() % 10;
 
-  tft.loadFont("manrope-regular36", LittleFS);
-  tft.setTextColor(color, bg);
-  tft.setCursor(4, 4);
-  tft.println(hour);
-  tft.setCursor(4, tft.getCursorY());
-  tft.println(min);
-  tft.unloadFont();
+  if(prevMinute != now.minute() || spotifyConnection.stateChanged){
+    char hour[3] = "00", min[3] = "00";
+    hour[0] = '0' + now.hour() / 10;
+    hour[1] = '0' + now.hour() % 10;
+    min[0] = '0' + now.minute() / 10;
+    min[1] = '0' + now.minute() % 10;
+
+    tft.loadFont("manrope-regular36", LittleFS);
+    tft.setTextColor(color, bg, true);
+
+    //tft.fillRect(3, 3, 49, 72, bg);
+
+    tft.setCursor(4, 4);
+    tft.println(hour);
+    tft.setCursor(4, tft.getCursorY());
+    tft.println(min);
+    tft.unloadFont();
+    prevMinute = now.minute();
+  }
+  spotifyConnection.stateChanged = false;
 }
 
 //////////////////////////////////////////////////////
@@ -1451,7 +1459,7 @@ void setup(){
 
   //for brightness control of tft screen, we will use pwm
   analogWriteRange(40);
-  analogWriteFreq(48);
+  analogWriteFreq(72);
   analogWrite(tftPow,tftBrightness);
 
   //initiate TFT display
@@ -1553,7 +1561,9 @@ void loop(){
     case 1:
       if(currDisplayFace != prevDisplayFace){
         prevDisplayFace = currDisplayFace;
-        tft.fillScreen(TFT_BLACK);
+        tft.fillScreen(0x09C3);
+        spotifyConnection.stateChanged = true;
+        //tft.fillScreen(TFT_BLACK);
       }
       displayFace1();
       break;
