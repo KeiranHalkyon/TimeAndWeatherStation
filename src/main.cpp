@@ -106,8 +106,9 @@ const uint16_t displayUpdatet = 500/500,
 
 uint8_t currDisplayFace = 0,
         prevDisplayFace = -1,
-        tftBrightness = 30,
-        rotation = 0;
+        tftBrightness = 39,
+        rotation = 0,
+        prevMinute = 100;
 
 //count no. of external interrupts
 volatile uint16_t ticks = 0;
@@ -179,11 +180,18 @@ IRAM_ATTR void checkTicks(){
 
   if(++ticks >=600)
     ticks = 0;
+
+  //button.tick();
 }
 
-IRAM_ATTR void checkClicks(){
+IRAM_ATTR void clickUp(){
   startInput = true;
-  button.tick();
+  button.tick(LOW);
+}
+
+IRAM_ATTR void clickDown(){
+  startInput = true;
+  button.tick(HIGH);
 }
 
 void refreshTimeFromRTC(){
@@ -557,8 +565,8 @@ public:
           tokenExpireTime = doc["expires_in"];
           tokenStartTime = millis();
           accessTokenSet = true;
-          Serial.println(accessToken);
-          Serial.println(refreshToken);
+          // Serial.println(accessToken);
+          // Serial.println(refreshToken);
           prefs.putString("refreshToken", refreshToken);
       }else{
           Serial.println("Refresh Failed");
@@ -628,7 +636,7 @@ public:
               //refresh = true;
               songChanged = true;
               stateChanged = true;
-              tft.fillScreen(TFT_BLACK);
+              //tft.fillScreen(TFT_BLACK);
           }
           currentSong.album = albumName.substring(1,albumName.length()-1);
           currentSong.artist = artistName.substring(1,artistName.length()-1);
@@ -1472,6 +1480,8 @@ void setup(){
 
   //setting up button fuctions
   button = OneButton(btnInput, true);
+  // attachInterrupt(digitalPinToInterrupt(btnInput), clickDown, FALLING);
+  // attachInterrupt(digitalPinToInterrupt(btnInput), clickUp, RISING);
 
   button.attachClick(singleClick);
   // button.attachDoubleClick(doubleClick);
@@ -1536,6 +1546,9 @@ void setup(){
 //////////////////////////////////////////////////////
 
 void loop(){
+
+  //TODO : How to refresh spotify token?? And Setup timers for daily and 3 hourly forecasts
+
   MDNS.update();
   if(refreshTime){
     refreshTimeFromRTC();
@@ -1625,7 +1638,8 @@ void loop(){
   }
   else
     server.handleClient();
-  //delay(20);
+  delay(10);
+  button.tick();
   //Serial.println(ticks);
 }
 
