@@ -1451,7 +1451,14 @@ void displaySpotify(){
   spotifyConnection.stateChanged = false;
 }
 
+void displayWeather(){
+  tft.setCursor(0,0);
+  tft.println("PLACEHOLDER");
+}
+
 void displayOTA(){
+  tft.setCursor(0,0);
+  tft.print("OTA Enabled");
   Serial.println("OTA Enabled");
 }
 
@@ -1558,9 +1565,9 @@ void setup(){
   Serial.println("mDNS responder started");
   //MDNS.addService("http", "tcp", 80);
   //Begin OTA service
-  // ArduinoOTA.setHostname("esp8266");
+  ArduinoOTA.setHostname("esp8266");
   // ArduinoOTA.setPassword("123");
-  //ArduinoOTA.begin();
+  ArduinoOTA.begin();
 }//setup
 
 //////////////////////////////////////////////////////
@@ -1573,137 +1580,155 @@ void loop(){
   //TODO : Figure out why refresh token after mdns fails if there is no(substantial) delay
 
   MDNS.update();
-  if(refreshTime){
-    refreshTimeFromRTC();
-    refreshTime = false;
-  }
-  if(refreshSensors){
-    refreshBMP();
-    refreshAHT();
-    refreshSensors = false;
-  }
-  button.tick();
-  if(refreshDisplay){
-    switch (currDisplayFace)
-    {
-    case DEFAULT_FACE:
-      if(currDisplayFace != prevDisplayFace){
-        prevDisplayFace = currDisplayFace;
-        tft.fillScreen(TFT_BLACK);
-      }
-      displayDefault();
-      break;
-    
-    case WEATHER_SUMMARY_FACE:
-      break;
+  if(currDisplayFace != OTA_FACE){
+    if(refreshTime){
+      refreshTimeFromRTC();
+      refreshTime = false;
+    }
+    if(refreshSensors){
+      refreshBMP();
+      refreshAHT();
+      refreshSensors = false;
+    }
+    button.tick();
+    if(refreshDisplay){
+      switch (currDisplayFace)
+      {
+      case DEFAULT_FACE:
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(TFT_BLACK);
+        }
+        displayDefault();
+        break;
+      
+      case WEATHER_SUMMARY_FACE:
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(TFT_BLACK);
+        }
+        displayWeather();
+        break;
 
-    case SPOTIFY_FACE:
-      if(currDisplayFace != prevDisplayFace){
-        prevDisplayFace = currDisplayFace;
-        tft.fillScreen(0x09C3);
-        spotifyConnection.stateChanged = true;
-        //tft.fillScreen(TFT_BLACK);
+      case SPOTIFY_FACE:
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(0x09C3);
+          spotifyConnection.stateChanged = true;
+          //tft.fillScreen(TFT_BLACK);
+        }
+        displaySpotify();
+        break;
+      
+      case OTA_FACE:
+        break;
+        // if(currDisplayFace != prevDisplayFace){
+        //   prevDisplayFace = currDisplayFace;
+        //   tft.fillScreen(TFT_BLACK);
+        //   displayOTA();
+        // }
+        // ArduinoOTA.handle();
+        // break;
       }
-      displaySpotify();
-      break;
-    
-    case OTA_FACE:
-      if(currDisplayFace != prevDisplayFace){
+      refreshDisplay = false;
+      //Serial.println(ESP.getFreeHeap(), DEC);
+    }
+    button.tick();
+    if( !isTimeSetFromNTP && WiFi.status() == WL_CONNECTED) { // TODO: find way to reduce checking rate if rtc is already set
+      if(checkInternet()){
+        Serial.println(F("Connected to WiFi, updating time from NTP"));
+        setRTCfromNTP();
+        isTimeSetFromNTP = true;
+      }
+      sec10over = false;//TODO : find a better/efficient solution
+    }
+    button.tick();
+    if(sec5over){
+      //unsigned long time = millis();
+      if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
+        spotifyConnection.getTrackInfo();
+      }
+      //Serial.println(millis()-time);
+      sec5over = false;
+    }
+    button.tick();
+    if(sec10over){
+      if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
+        spotifyConnection.getTrackInfo();
+      }
+      sec10over = false;
+    }
+    button.tick();
+    if(min1over){
+      if(checkInternet())
+        internetAvailable = sendDataToRDS(tempBMP,pressureBMP,tempAHT,humidityAHT);
+      min1over=false;
+    }
+    button.tick();
+
+    if(min5over){
+      //getApiWeather();
+      //unsigned long time = millis();
+      if(checkInternet()){
+        internetAvailable = getApiWeatherCurrent();
+        if(internetAvailable)
+          min5over=false;
+      }
+      //Serial.print("\nFinished in ");
+      //Serial.println(millis()-time);
+    }
+    button.tick();
+
+    //need to handle multiple time consuming tasks at hour end, so using hourTaskCount to do them one at a time
+    if(prevHour != now.hour() && checkInternet()){
+
+      //TODO : the tasks are done in non blocking success/failure, deal with it somehow
+      bool success = false;
+      switch(hourTaskCount){
+        case 0 :
+          success = getApiWeather3HrForecast();
+          break;
+        case 1 :
+          success = getApiWeatherDailyForecast();
+          break;
+        case 2 :
+          if(spotifyConnection.accessTokenSet)
+            success = spotifyConnection.refreshAuth();
+          break;
+      }
+      
+      if(success){
+        Serial.print("Success at hour task : ");
+        Serial.println(hourTaskCount);
+      }
+      else{
+        Serial.print("Failure at hour task : ");
+        Serial.println(hourTaskCount);
+      }
+
+      hourTaskCount++;
+      if(hourTaskCount>2){
+        hourTaskCount = 0;
+        prevHour = now.hour();
+      }
+    }
+    button.tick();
+    if(spotifyConnection.accessTokenSet){
+      if(serverOn)
+        serverOn = false;
+    }
+    else
+      server.handleClient();
+  }
+  else{
+    if(currDisplayFace != prevDisplayFace){
         prevDisplayFace = currDisplayFace;
         tft.fillScreen(TFT_BLACK);
         displayOTA();
       }
-      break;
-    }
-    refreshDisplay = false;
-    //Serial.println(ESP.getFreeHeap(), DEC);
+    ArduinoOTA.handle();
   }
-  button.tick();
-  if( !isTimeSetFromNTP && WiFi.status() == WL_CONNECTED) { // TODO: find way to reduce checking rate if rtc is already set
-    if(checkInternet()){
-      Serial.println(F("Connected to WiFi, updating time from NTP"));
-      setRTCfromNTP();
-      isTimeSetFromNTP = true;
-    }
-    sec10over = false;//TODO : find a better/efficient solution
-  }
-  button.tick();
-  if(sec5over){
-    //unsigned long time = millis();
-    if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
-      spotifyConnection.getTrackInfo();
-    }
-    //Serial.println(millis()-time);
-    sec5over = false;
-  }
-  button.tick();
-  if(sec10over){
-    if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
-      spotifyConnection.getTrackInfo();
-    }
-    sec10over = false;
-  }
-  button.tick();
-  if(min1over){
-    if(checkInternet())
-      internetAvailable = sendDataToRDS(tempBMP,pressureBMP,tempAHT,humidityAHT);
-    min1over=false;
-  }
-  button.tick();
 
-  if(min5over){
-    //getApiWeather();
-    //unsigned long time = millis();
-    if(checkInternet()){
-      internetAvailable = getApiWeatherCurrent();
-      if(internetAvailable)
-        min5over=false;
-    }
-    //Serial.print("\nFinished in ");
-    //Serial.println(millis()-time);
-  }
-  button.tick();
-
-  //need to handle multiple time consuming tasks at hour end, so using hourTaskCount to do them one at a time
-  if(prevHour != now.hour() && checkInternet()){
-
-    //TODO : the tasks are done in non blocking success/failure, deal with it somehow
-    bool success = false;
-    switch(hourTaskCount){
-      case 0 :
-        success = getApiWeather3HrForecast();
-        break;
-      case 1 :
-        success = getApiWeatherDailyForecast();
-        break;
-      case 2 :
-        if(spotifyConnection.accessTokenSet)
-          success = spotifyConnection.refreshAuth();
-        break;
-    }
-    
-    if(success){
-      Serial.print("Success at hour task : ");
-      Serial.println(hourTaskCount);
-    }
-    else{
-      Serial.print("Failure at hour task : ");
-      Serial.println(hourTaskCount);
-    }
-
-    hourTaskCount++;
-    if(hourTaskCount>2){
-      hourTaskCount = 0;
-      prevHour = now.hour();
-    }
-  }
-  button.tick();
-  if(spotifyConnection.accessTokenSet){
-    if(serverOn)
-      serverOn = false;
-  }
-  else
-    server.handleClient();
   delay(10);
   button.tick();
   //Serial.println(ticks);
