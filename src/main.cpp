@@ -108,7 +108,9 @@ uint8_t currDisplayFace = 0,
         prevDisplayFace = -1,
         tftBrightness = 39,
         rotation = 0,
-        prevMinute = 100;
+        prevMinute = 100,
+        prevHour = 100,
+        hourTaskCount = 0;
 
 //count no. of external interrupts
 volatile uint16_t ticks = 0;
@@ -730,7 +732,7 @@ public:
       
       return success;
   }
-  */
+  
   bool drawScreen(){
       // int rectWidth = 120;
       // int rectHeight = 10;
@@ -784,7 +786,7 @@ public:
       // tft.drawString(currentSong.song, tft.width() / 2, 125);
       return true;
   }
-  /*
+  
   bool togglePlay(){
       String url = "https://api.spotify.com/v1/me/player/" + String(isPlaying ? "pause" : "play");
       isPlaying = !isPlaying;
@@ -1022,6 +1024,7 @@ bool sendDataToRDS(float tbmp, float pbmp,float taht, float haht){
   int responseCode = https.POST("");
 
   //Serial.printf("Response : %d\nMessage : %s\nTime taken in ms : %d",responseCode,https.getString().c_str(),millis()-times);
+  https.end();
   return (responseCode == 200);
 }
 /*
@@ -1105,6 +1108,7 @@ bool getApiWeatherCurrent(){
   } else {
     Serial.printf("[HTTPS] Unable to connect\n");
   }
+  https.end();
   return (httpCode == 200);
 }
 
@@ -1141,6 +1145,7 @@ bool getApiWeather3HrForecast(){
   } else {
     Serial.printf("[HTTPS] Unable to connect\n");
   }
+  https.end();
   return (httpCode == 200);
 }
 
@@ -1189,6 +1194,7 @@ bool getApiWeatherDailyForecast(){
   } else {
     Serial.printf("[HTTPS] Unable to connect\n");
   }
+  https.end();
   return (httpCode == 200);
 }
 
@@ -1443,6 +1449,9 @@ void displayFace1(){
 void setup(){
   Serial.begin(115200);
 
+  Serial.print(ESP.getResetInfo());
+  Serial.print(ESP.getResetReason());
+
   WiFi.mode(WIFI_STA);
   internetAvailable = connectToWifi(true, 10000);//initiate wifi connection
   //connectToWifi(false);
@@ -1482,8 +1491,6 @@ void setup(){
 
   //setting up button fuctions
   button = OneButton(btnInput, true);
-  // attachInterrupt(digitalPinToInterrupt(btnInput), clickDown, FALLING);
-  // attachInterrupt(digitalPinToInterrupt(btnInput), clickUp, RISING);
 
   button.attachClick(singleClick);
   // button.attachDoubleClick(doubleClick);
@@ -1612,7 +1619,7 @@ void loop(){
     }
     sec10over = false;
   }
-
+  button.tick();
   if(min1over){
     if(checkInternet())
       internetAvailable = sendDataToRDS(tempBMP,pressureBMP,tempAHT,humidityAHT);
