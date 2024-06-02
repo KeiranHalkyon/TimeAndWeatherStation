@@ -13,13 +13,13 @@ bool getFile(String url, String filename) {
   // Check WiFi connection
   if ((WiFi.status() == WL_CONNECTED)) {
 
-    Serial.print("[HTTP] begin...\n");
-    std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+    //Serial.print("[HTTP] begin...\n");
+    std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
     client -> setInsecure();
     HTTPClient http;
     http.begin(*client, url);
 
-    Serial.print("[HTTP] GET...\n");
+    //Serial.print("[HTTP] GET...\n");
     // Start connection and send HTTP header
     int httpCode = http.GET();
     if (httpCode == 200) {
@@ -29,7 +29,7 @@ bool getFile(String url, String filename) {
         return 0;
       }
       // HTTP header has been send and Server response header has been handled
-      Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+      //Serial.printf("[HTTP] GET... code: %d\n", httpCode);
 
       // File found at server
       if (httpCode == HTTP_CODE_OK) {
@@ -63,10 +63,11 @@ bool getFile(String url, String filename) {
           }
           yield();
         }
-        Serial.println();
-        Serial.print("[HTTP] connection closed or file end.\n");
+        //Serial.println();
+        //Serial.print("[HTTP] connection closed or file end.\n");
       }
       f.close();
+      //Serial.println("File Closed");
     }
     else {
       Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
