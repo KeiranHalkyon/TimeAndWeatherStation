@@ -1304,8 +1304,10 @@ unsigned long myAbs(long val){
   return (val>0)? val : -val;
 }
 
-bool checkInternet(){
-  if(internetAvailable && WiFi.isConnected())
+bool checkInternet(bool force = false){
+  if(force)
+    return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
+  else if(internetAvailable && WiFi.isConnected())
     return true;
   else if(WiFi.isConnected() && (myAbs(millis()-lastInternetRefresh) > checkInternetInterval || !rtc.isrunning())){
     lastInternetRefresh = millis();
