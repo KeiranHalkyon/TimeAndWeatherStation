@@ -34,6 +34,11 @@
 //
 /////////////////////////////////////////////////////
 #define FORECAST_RANGE                6
+#define DEFAULT_FACE 0
+#define WEATHER_SUMMARY_FACE 1
+#define SPOTIFY_FACE 2
+#define OTA_FACE 3
+#define NO_OF_FACES 4
 /////////////////////////////////////////////////////
 //
 //                INCLUDED LIBRARIES
@@ -159,6 +164,9 @@ const char daysOfTheWeekShort[7][4] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"
 //////////////////////////////////////////////////////
 
 IRAM_ATTR void checkTicks(){
+
+  //TODO : why does button.tick() in this ISR crash album art download???????????
+
   if(ticks % displayUpdatet == 0)
     refreshDisplay = true;
   
@@ -183,17 +191,8 @@ IRAM_ATTR void checkTicks(){
   if(++ticks >=600)
     ticks = 0;
 
-  //button.tick();
-}
-
-IRAM_ATTR void clickUp(){
-  startInput = true;
-  button.tick(LOW);
-}
-
-IRAM_ATTR void clickDown(){
-  startInput = true;
-  button.tick(HIGH);
+  //yield();
+  //button.tick(); 
 }
 
 void refreshTimeFromRTC(){
@@ -307,7 +306,7 @@ void printHumidity(){
 
 // this function will be called when the button was pressed 1 time only.
 void singleClick() {
-  currDisplayFace = (currDisplayFace+1)%2;
+  currDisplayFace = (currDisplayFace+1)%NO_OF_FACES;
   Serial.print("Current Face : ");
   Serial.println(currDisplayFace);
 } // singleClick
@@ -351,6 +350,19 @@ void pressStop() {
 
 void duringLongPress(){
   Serial.println("Long Press ongoing");
+}
+
+String removeBackslash(String text){
+  String result;
+  result.reserve(text.length()+1);
+
+  for(int i = 0; i < text.length(); i++){
+    char ch = text.charAt(i);
+    if(ch == '\\')
+      continue;
+    result += ch;
+  }
+  return result;
 }
 
 //////////////////////////////////////////////////////
@@ -618,13 +630,13 @@ public:
           songId = getValue(https,"uri");
           String isPlay = getValue(https, "is_playing");
           isPlaying = isPlay == "true";
-          Serial.println(isPlay);
+          //Serial.println(isPlay);
           // Serial.println(songId);
           songId = songId.substring(15,songId.length()-1);
           // Serial.println(songId);
           //Serial.println(ESP.getFreeHeap());
           https.end();
-          Serial.println(ESP.getFreeHeap());
+          //Serial.println(ESP.getFreeHeap());
           // listLittleFS();
           if (songId != currentSong.Id){
               
@@ -640,9 +652,9 @@ public:
               stateChanged = true;
               //tft.fillScreen(TFT_BLACK);
           }
-          currentSong.album = albumName.substring(1,albumName.length()-1);
-          currentSong.artist = artistName.substring(1,artistName.length()-1);
-          currentSong.song = songName.substring(1,songName.length()-1);
+          currentSong.album = removeBackslash(albumName.substring(1,albumName.length()-1));
+          currentSong.artist = removeBackslash(artistName.substring(1,artistName.length()-1));
+          currentSong.song = removeBackslash(songName.substring(1,songName.length()-1));
           currentSong.Id = songId;
           currentSong.isLiked = findLikedStatus(songId);
           success = true;
@@ -1324,7 +1336,7 @@ bool checkInternet(bool force = false){
 }
 
 //default face, includes a bit of everything
-void displayFace0(){
+void displayDefault(){
   // uint16_t ypos = 0;
   //tft.fillScreen(TFT_BLACK);
   tft.setCursor(2,0);
@@ -1377,7 +1389,7 @@ void displayFace0(){
 }
 
 //spotify face, but only the time is updated regularly
-void displayFace1(){
+void displaySpotify(){
   uint16_t color = 0xFD80, bg = 0x09C3;
   
   if(spotifyConnection.stateChanged){
@@ -1394,7 +1406,6 @@ void displayFace1(){
     else if(!spotifyConnection.isAvailable){
       printSplitString("Not connected or Nothing Playing",19,95);
     }
-    //else if(spotifyConnection.songChanged){
     else{
       if (LittleFS.exists("/albumArt.jpg") == true) { 
         TJpgDec.setSwapBytes(true);
@@ -1425,10 +1436,10 @@ void displayFace1(){
     min[0] = '0' + now.minute() / 10;
     min[1] = '0' + now.minute() % 10;
 
-    tft.loadFont("manrope-regular36", LittleFS);
+    tft.loadFont("manrope-regular40", LittleFS);
     tft.setTextColor(color, bg, true);
 
-    //tft.fillRect(3, 3, 49, 72, bg);
+    tft.fillRect(3, 3, 49, 72, bg);
 
     tft.setCursor(4, 4);
     tft.println(hour);
@@ -1438,6 +1449,10 @@ void displayFace1(){
     prevMinute = now.minute();
   }
   spotifyConnection.stateChanged = false;
+}
+
+void displayOTA(){
+  Serial.println("OTA Enabled");
 }
 
 //////////////////////////////////////////////////////
@@ -1555,8 +1570,7 @@ void setup(){
 //////////////////////////////////////////////////////
 
 void loop(){
-
-  //TODO : How to refresh spotify token?? And Setup timers for daily and 3 hourly forecasts
+  //TODO : Figure out why refresh token after mdns fails if there is no(substantial) delay
 
   MDNS.update();
   if(refreshTime){
@@ -1572,25 +1586,33 @@ void loop(){
   if(refreshDisplay){
     switch (currDisplayFace)
     {
-    case 0:
+    case DEFAULT_FACE:
       if(currDisplayFace != prevDisplayFace){
         prevDisplayFace = currDisplayFace;
         tft.fillScreen(TFT_BLACK);
       }
-      displayFace0();
+      displayDefault();
       break;
     
-    case 1:
+    case WEATHER_SUMMARY_FACE:
+      break;
+
+    case SPOTIFY_FACE:
       if(currDisplayFace != prevDisplayFace){
         prevDisplayFace = currDisplayFace;
         tft.fillScreen(0x09C3);
         spotifyConnection.stateChanged = true;
         //tft.fillScreen(TFT_BLACK);
       }
-      displayFace1();
+      displaySpotify();
       break;
     
-    case 3:
+    case OTA_FACE:
+      if(currDisplayFace != prevDisplayFace){
+        prevDisplayFace = currDisplayFace;
+        tft.fillScreen(TFT_BLACK);
+        displayOTA();
+      }
       break;
     }
     refreshDisplay = false;
@@ -1605,16 +1627,18 @@ void loop(){
     }
     sec10over = false;//TODO : find a better/efficient solution
   }
-
+  button.tick();
   if(sec5over){
-    if(currDisplayFace == 1 && spotifyConnection.accessTokenSet){
+    //unsigned long time = millis();
+    if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
       spotifyConnection.getTrackInfo();
     }
+    //Serial.println(millis()-time);
     sec5over = false;
   }
-
+  button.tick();
   if(sec10over){
-    if(currDisplayFace != 1 && spotifyConnection.accessTokenSet){
+    if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
       spotifyConnection.getTrackInfo();
     }
     sec10over = false;
@@ -1638,9 +1662,42 @@ void loop(){
     //Serial.print("\nFinished in ");
     //Serial.println(millis()-time);
   }
-
   button.tick();
 
+  //need to handle multiple time consuming tasks at hour end, so using hourTaskCount to do them one at a time
+  if(prevHour != now.hour() && checkInternet()){
+
+    //TODO : the tasks are done in non blocking success/failure, deal with it somehow
+    bool success = false;
+    switch(hourTaskCount){
+      case 0 :
+        success = getApiWeather3HrForecast();
+        break;
+      case 1 :
+        success = getApiWeatherDailyForecast();
+        break;
+      case 2 :
+        if(spotifyConnection.accessTokenSet)
+          success = spotifyConnection.refreshAuth();
+        break;
+    }
+    
+    if(success){
+      Serial.print("Success at hour task : ");
+      Serial.println(hourTaskCount);
+    }
+    else{
+      Serial.print("Failure at hour task : ");
+      Serial.println(hourTaskCount);
+    }
+
+    hourTaskCount++;
+    if(hourTaskCount>2){
+      hourTaskCount = 0;
+      prevHour = now.hour();
+    }
+  }
+  button.tick();
   if(spotifyConnection.accessTokenSet){
     if(serverOn)
       serverOn = false;
