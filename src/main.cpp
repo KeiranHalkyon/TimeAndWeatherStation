@@ -195,6 +195,10 @@ IRAM_ATTR void checkTicks(){
   //button.tick(); 
 }
 
+IRAM_ATTR void checkClicks(){
+  button.tick();
+}
+
 void refreshTimeFromRTC(){
   now = rtc.now();
 }
@@ -1513,6 +1517,7 @@ void setup(){
 
   //setting up button fuctions
   button = OneButton(btnInput, true);
+  attachInterrupt(digitalPinToInterrupt(btnInput), checkClicks, CHANGE);
 
   button.attachClick(singleClick);
   // button.attachDoubleClick(doubleClick);
