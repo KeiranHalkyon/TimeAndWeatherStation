@@ -109,7 +109,7 @@ const uint16_t displayUpdatet = 500/500,
          min1timer = 60000/500,
          min5timer = 300000/500;
 
-uint8_t currDisplayFace = 0,
+uint8_t currDisplayFace = 2,
         prevDisplayFace = -1,
         tftBrightness = 39,
         rotation = 0,
@@ -445,7 +445,7 @@ struct songDetails{
 
 char *parts[10];
 
-void printSplitString(String text,int maxLineSize, int yPos)
+void printSplitString(String text,int maxLineSize, int xPos, int yPos)
 {
     int currentWordStart = 0;
     int spacedCounter = 0;
@@ -468,6 +468,7 @@ void printSplitString(String text,int maxLineSize, int yPos)
     currentWordStart = spaceIndex;
     size_t counter = 0;
     currentWordStart = 0;
+    tft.setCursor(xPos,yPos);
     while(counter <= spacedCounter){
         char printable[maxLineSize];
         char* printablePointer = printable;
@@ -497,7 +498,7 @@ void printSplitString(String text,int maxLineSize, int yPos)
             output = output.substring(1);
         // Serial.println(output);
         //tft.setCursor((int)(tft.width()/2 - tft.textWidth(output) / 2),tft.getCursorY());
-        tft.setCursor(6, tft.getCursorY());
+        tft.setCursor(xPos, tft.getCursorY());
         tft.println(output);
         // free(printable);
     }
@@ -974,6 +975,8 @@ public:
   bool stateChanged = false;
   long tokenStartTime;
   int tokenExpireTime;
+  uint8_t barLength;
+  uint8_t barPosX, barPosY;
   songDetails currentSong;
   float currentSongPositionMs;
   float lastSongPositionMs;
@@ -1402,13 +1405,14 @@ void displaySpotify(){
     tft.loadFont("leelawad12", LittleFS);
     tft.setTextDatum(BL_DATUM);
     tft.setTextWrap(true);
-    tft.setCursor(0,85);
+    //tft.setCursor(0,87);
+    uint8_t textStartX = 8, textStartY = 87;
 
     if(!spotifyConnection.accessTokenSet){
-      printSplitString("Spotify not logged in",19,95);
+      printSplitString("Spotify not logged in", 19, textStartX, textStartY);
     }
     else if(!spotifyConnection.isAvailable){
-      printSplitString("Not connected or Nothing Playing",19,95);
+      printSplitString("Not connected or Nothing Playing", 19, textStartX, textStartY);
     }
     else{
       if (LittleFS.exists("/albumArt.jpg") == true) { 
@@ -1424,32 +1428,59 @@ void displaySpotify(){
         tft.drawRect(xpos+3, ypos+3, 69, 69, 0x8C8B); //6691
       }
       
-      printSplitString(spotifyConnection.currentSong.artist,19,95); //15 was 20
-      // tft.drawString(currentSong.artist, tft.width() / 2, 10);
-      tft.setCursor(0, tft.getCursorY() + 5);
-      printSplitString(spotifyConnection.currentSong.song,19,130);  //15 was 20
+      printSplitString(spotifyConnection.currentSong.artist, 19, textStartX, textStartY);
+      printSplitString(spotifyConnection.currentSong.song, 19, textStartX, tft.getCursorY()+7);
+
+      spotifyConnection.barLength = tft.getCursorY() - textStartY + 3;
+      spotifyConnection.lastSongPositionMs = -1.0f;
+      spotifyConnection.barPosX = 3;
+      spotifyConnection.barPosY = textStartY -3;
+      tft.drawFastVLine(3, textStartY - 3, spotifyConnection.barLength, 0x8C8B); //8C8B
+      tft.drawFastVLine(4, textStartY - 3, spotifyConnection.barLength, 0x8C8B); //E042
+
       spotifyConnection.songChanged = false;
     }
     tft.unloadFont();
   }
 
+  if(spotifyConnection.lastSongPositionMs != spotifyConnection.currentSongPositionMs){
+    int progress = (int)(spotifyConnection.currentSongPositionMs * 
+        spotifyConnection.barLength) / spotifyConnection.currentSong.durationMs;
+    
+    tft.drawFastVLine(spotifyConnection.barPosX,spotifyConnection.barPosY,progress,0xE042);
+    tft.drawFastVLine(spotifyConnection.barPosX+1,spotifyConnection.barPosY,progress,0xE042);
+    spotifyConnection.lastSongPositionMs = spotifyConnection.currentSongPositionMs;
+  }
+
   if(prevMinute != now.minute() || spotifyConnection.stateChanged){
-    char hour[3] = "00", min[3] = "00";
+    char hour[3] = "16", min[3] = "07";
     hour[0] = '0' + now.hour() / 10;
     hour[1] = '0' + now.hour() % 10;
     min[0] = '0' + now.minute() / 10;
     min[1] = '0' + now.minute() % 10;
 
     tft.loadFont("manrope-regular40", LittleFS);
-    tft.setTextColor(color, bg, true);
+    tft.setTextColor(color, bg);
 
-    tft.fillRect(3, 3, 49, 72, bg);
+    //Different cursor location required for centering 1 and 7
 
-    tft.setCursor(4, 4);
-    tft.println(hour);
-    tft.setCursor(4, tft.getCursorY());
-    tft.println(min);
+    tft.fillRect(3, 3, 49, 36, bg);
+    tft.setCursor( (hour[0]=='1')? 8 : 4, 4);
+    tft.print(hour[0]);
+    tft.setCursor((hour[1]=='1')? 32 : (hour[1]=='7')? 31 : 28, 4);
+    tft.println(hour[1]);
+
+    tft.fillRect(3, tft.getCursorY()-1, 49, 36, bg);
+    tft.setCursor( (min[0]=='1')? 8 : 4, tft.getCursorY());
+    tft.print(min[0]);
+    tft.setCursor((min[1]=='1')? 32 : (min[1]=='7')? 31 : 28, tft.getCursorY());
+    tft.println(min[1]);
+
     tft.unloadFont();
+
+    // tft.drawFastVLine(16,4,75,TFT_RED);
+    // tft.drawFastVLine(40,4,75,TFT_RED);
+
     prevMinute = now.minute();
   }
   spotifyConnection.stateChanged = false;
