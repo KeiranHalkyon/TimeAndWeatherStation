@@ -1590,12 +1590,13 @@ void loop(){
       refreshTimeFromRTC();
       refreshTime = false;
     }
+
     if(refreshSensors){
       refreshBMP();
       refreshAHT();
       refreshSensors = false;
     }
-    button.tick();
+    
     if(refreshDisplay){
       switch (currDisplayFace)
       {
@@ -1638,7 +1639,7 @@ void loop(){
       refreshDisplay = false;
       //Serial.println(ESP.getFreeHeap(), DEC);
     }
-    button.tick();
+    
     if( !isTimeSetFromNTP && WiFi.status() == WL_CONNECTED) { // TODO: find way to reduce checking rate if rtc is already set
       if(checkInternet()){
         Serial.println(F("Connected to WiFi, updating time from NTP"));
@@ -1647,7 +1648,7 @@ void loop(){
       }
       sec10over = false;//TODO : find a better/efficient solution
     }
-    button.tick();
+    
     if(sec5over){
       //unsigned long time = millis();
       if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
@@ -1656,20 +1657,19 @@ void loop(){
       //Serial.println(millis()-time);
       sec5over = false;
     }
-    button.tick();
+    
     if(sec10over){
       if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
         spotifyConnection.getTrackInfo();
       }
       sec10over = false;
     }
-    button.tick();
+    
     if(min1over){
       if(checkInternet())
         internetAvailable = sendDataToRDS(tempBMP,pressureBMP,tempAHT,humidityAHT);
       min1over=false;
     }
-    button.tick();
 
     if(min5over){
       //getApiWeather();
@@ -1682,7 +1682,6 @@ void loop(){
       //Serial.print("\nFinished in ");
       //Serial.println(millis()-time);
     }
-    button.tick();
 
     //need to handle multiple time consuming tasks at hour end, so using hourTaskCount to do them one at a time
     if(prevHour != now.hour() && checkInternet()){
@@ -1717,7 +1716,6 @@ void loop(){
         prevHour = now.hour();
       }
     }
-    button.tick();
     if(spotifyConnection.accessTokenSet){
       if(serverOn)
         serverOn = false;
