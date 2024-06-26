@@ -1,32 +1,32 @@
 /*
   TODO : 1) Setup state diagram/machine
-         2) Determine how the display will be updated
-            a) decide if display behavoiur will change on power status
+         2) Determine how the display will be updated - DONE
+            a) decide if display behavoiur will change on power status - REQUIRED
          3) Setup the following required modules - 
             a) Time updater (RTC ds1307) - DONE
-                i) Setup time on - (first boot, connection to network, repeated interval when connected to network)
-                ii) worry if leap years, minutes and second will be managed locally or by NTP - (done by NTP)
-            b) Temp and pressure updater (bmp280) - DONE-ish
+                i) Setup time on - (first boot, connection to network, repeated interval when connected to network) - DONE
+                ii) worry if leap years, minutes and second will be managed locally or by NTP - (done by NTP) - DONE
+            b) Temp and pressure updater (bmp280) - DONE
                 i) Altitude meter? - Done
             c) Temp and humidity updater (aht20) - DONE
             d) Setup button for input - DONE
-                i) Set state via interrupt method into a variable
-            e) Setup method to retrieve weather from OpenWeatherMap
-                i) Decide if both current and forecast is required?
-            f) Find some way to log local temp, humidity and pressure
+                i) Set state via interrupt method into a variable - MORE SETUP REQUIRED
+            e) Setup method to retrieve weather from OpenWeatherMap - DONE
+                i) Decide if both current and forecast is required? - DONE
+            f) Find some way to log local temp, humidity and pressure - NOT REQUIRED
                 i) store it in flash or external eprom?
-            g) Determine whether to offload data to some external site
-                i) if doing this.. decide where
-                ii) decide frequency of update
-            h) manage wifi
+            g) Determine whether to offload data to some external site - DONE
+                i) if doing this.. decide where - DONE
+                ii) decide frequency of update - YET TO DO
+            h) manage wifi - YET TO DO
                 i) add multiple AP if possible
                 ii) change state according to wifi connection
                 iii) use wifi library in future...
-            i) determine whether running on battery(3.3v) or main(5v)
+            i) determine whether running on battery(3.3v) or main(5v) - YET TO DO
                 i) update states as necessary
                 ii) Show battery status if possible
-            j) Spotify Player info (overkill)
-                i) Determine polling rate
+            j) Spotify Player info (overkill) - DONE
+                i) Determine polling rate - YET TO DETERMINE
 */
 /////////////////////////////////////////////////////
 //
@@ -65,10 +65,12 @@
 #include <TJpg_Decoder.h> 
 #include "TFT_eSPI.h"
 #include <Preferences.h>
+#include <timer.h>
 
 #include "user_constants.hpp"
 #include "Web_Fetch.h"
 #include "index.h"
+#include "iconsA.h"
 //////////////////////////////////////////////////////
 //
 //              GLOBAL VARIABLES
@@ -83,7 +85,7 @@ const uint8_t tftPow = 16,//3
               tftCLK = 14,
               tftMOSI = 13,
               btnInput = 12,
-              extIntrpt = 3;
+              extIntrpt = 16; //3
 
 bool  isTimeSetFromNTP = false,
       refreshDisplay = true,
@@ -109,10 +111,12 @@ const uint16_t displayUpdatet = 500/500,
          min1timer = 60000/500,
          min5timer = 300000/500;
 
-uint8_t currDisplayFace = 2,
+Timer baseTimer;
+
+uint8_t currDisplayFace = 0,
         prevDisplayFace = -1,
         tftBrightness = 39,
-        rotation = 0,
+        rotation = 2,
         prevMinute = 100,
         prevHour = 100,
         hourTaskCount = 0;
@@ -256,6 +260,7 @@ void refreshBMP(){
   altitudeBMP = bmp.readAltitude(1013.25);//TODO : make it constant
 }
 
+/*
 void printTime(){
   //char timeStr[6] = "00:00";
   char hour[3] = "00", min[3] = "00",
@@ -284,7 +289,7 @@ void printDate(){
 void printDay(){
   tft.print(daysOfTheWeekFull[now.dayOfTheWeek()]);
 }
-
+*/
 void printTemp(bool sensor = false){
   //sensor = false means bmp, true means AHT
   char tempStr[6];
@@ -1344,21 +1349,48 @@ bool checkInternet(bool force = false){
 
 //default face, includes a bit of everything
 void displayDefault(){
+  uint16_t color = 0xFD80, bg = TFT_BLACK;
   // uint16_t ypos = 0;
   //tft.fillScreen(TFT_BLACK);
-  tft.setCursor(2,0);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextFont(6);
-  tft.setTextSize(1);
+  tft.setCursor(2,4);
+  tft.setTextColor(0xFD80, TFT_BLACK);
+  //tft.setTextFont(6);
+  //tft.setTextSize(1);
 
-  printTime();
-  tft.println();
-  tft.setTextFont(1);
+  char dateStr[9] = "00/00/00";
+  dateStr[0] = '0' + now.day() / 10;
+  dateStr[1] = '0' + now.day() % 10;
+  dateStr[3] = '0' + now.month() / 10;
+  dateStr[4] = '0' + now.month() % 10;
+  dateStr[6] = '0' + (now.year() % 100) / 10;
+  dateStr[7] = '0' + now.year() % 10;
+  tft.loadFont("manrope-regular16");
+  tft.println(dateStr);
+  //printDay();
+  tft.println(daysOfTheWeekFull[now.dayOfTheWeek()]);
+  tft.unloadFont();
+
+  //printTime();
+
+  char hour[3] = "00", min[3] = "00",
+    colon = (now.second() & 1)? ':' : ' ' ;
+  hour[0] = '0' + now.hour() / 10;
+  hour[1] = '0' + now.hour() % 10;
+  min[0] = '0' + now.minute() / 10;
+  min[1] = '0' + now.minute() % 10;
+
+  tft.loadFont("manrope-regular40", LittleFS);
+  tft.setTextColor(color, bg, true);
+  tft.print(hour);
+  tft.print(colon);
+  //tft.setCursor(70,0);
+  tft.println(min);
+  tft.unloadFont();
+
+  //tft.setTextFont(1);
   //tft.setCursor(tft.getCursorX(),tft.getCursorY()-10);
-  tft.setTextSize(2);
-  printDate();
-  tft.println();
-  printDay();
+  //tft.setTextSize(2);
+  
   tft.println();
 
   tft.setTextFont(1);
@@ -1493,7 +1525,7 @@ void displayWeather(){
 
 void displayOTA(){
   tft.setCursor(0,0);
-  tft.print("OTA Enabled");
+  tft.println("OTA Enabled");
   Serial.println("OTA Enabled");
 }
 
@@ -1510,7 +1542,7 @@ void setup(){
   Serial.print(ESP.getResetReason());
 
   WiFi.mode(WIFI_STA);
-  internetAvailable = connectToWifi(true, 10000);//initiate wifi connection
+  internetAvailable = connectToWifi(true, 5000);//initiate wifi connection
   //connectToWifi(false);
 
   //initialize RTC chip
@@ -1535,12 +1567,12 @@ void setup(){
 
   //for brightness control of tft screen, we will use pwm
   analogWriteRange(40);
-  analogWriteFreq(72);
-  analogWrite(tftPow,tftBrightness);
+  analogWriteFreq(48); //lowered from 72
+  //analogWrite(tftPow,tftBrightness);
 
   //initiate TFT display
   tft.init();
-  tft.setRotation(2);
+  tft.setRotation(rotation);
   tft.fillScreen(TFT_BLACK);
   TJpgDec.setJpgScale(4);
   TJpgDec.setSwapBytes(true);
@@ -1562,32 +1594,23 @@ void setup(){
   // button.setLongPressIntervalMs(1200);
 
   //setup external interrupt from ds1307
-  pinMode(extIntrpt, INPUT);
-  attachInterrupt(digitalPinToInterrupt(extIntrpt), checkTicks, CHANGE);
+  //pinMode(extIntrpt, INPUT_PULLDOWN_16);
+  //attachInterrupt(digitalPinToInterrupt(extIntrpt), checkTicks, CHANGE);
 
-  if(rtc.readSqwPinMode() != DS1307_SquareWave1HZ)
-    rtc.writeSqwPinMode(DS1307_SquareWave1HZ);
+  // if(rtc.readSqwPinMode() != DS1307_SquareWave1HZ)
+  //   rtc.writeSqwPinMode(DS1307_SquareWave1HZ);
 
-  //check if refresh token is already present
-  prefs.begin("spotify");
-  if(prefs.isKey("refreshToken")){
-    // Serial.println("Refresh token already present---");
-    // Serial.println(prefs.getString("refreshToken"));
-    // Serial.println("---");
-    delay(4000);
-    spotifyConnection.setRefreshToken(prefs.getString("refreshToken"));
+  if(rtc.readSqwPinMode() != DS1307_OFF)
+    rtc.writeSqwPinMode(DS1307_OFF);
+
+  baseTimer.setInterval(500);
+  baseTimer.setCallback(checkTicks);
+  baseTimer.start();
+
+  //get last display face
+  if(prefs.isKey("lastFace")){
+    currDisplayFace = prefs.getChar("lastFace");
   }
-
-//start server if token could not be refreshed
-  if(!spotifyConnection.accessTokenSet){
-    server.on("/", handleRoot);      //Which routine to handle at root location
-    server.on("/callback", handleCallbackPage);      //Which routine to handle at root location
-    server.begin();                  //Start server
-    Serial.println("HTTP server started");
-    //tft.println(WiFi.localIP());
-  }
-  else
-    serverOn = false;
 
   for(int i = 0 ; i < 10; i++){
     parts[i] = (char*)malloc(sizeof(char) * 20);
@@ -1601,9 +1624,58 @@ void setup(){
   Serial.println("mDNS responder started");
   //MDNS.addService("http", "tcp", 80);
   //Begin OTA service
+  
+  //Setup Arduino OTA
+
+  ArduinoOTA.onStart([]() {
+    //detach btn and rtc interrupt
+    detachInterrupt(digitalPinToInterrupt(btnInput));
+    detachInterrupt(digitalPinToInterrupt(extIntrpt));
+    tft.println("Starting update...");
+
+    if(ArduinoOTA.getCommand() == U_FLASH){
+      tft.println("Receiving filesystem update...");
+      LittleFS.end();
+    }
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    tft.println("OTA succeeded");
+    tft.println("Rebooting...");
+    prefs.putChar("lastFace", 0);
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]", error);
+    tft.printf("Error %u",error);
+
+    //Reattach interupts
+    attachInterrupt(digitalPinToInterrupt(btnInput), checkTicks, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(extIntrpt), checkClicks, CHANGE);
+  });
+
   ArduinoOTA.setHostname("esp8266");
   // ArduinoOTA.setPassword("123");
   ArduinoOTA.begin();
+
+  //check if refresh token is already present
+  prefs.begin("spotify");
+  if(prefs.isKey("refreshToken")){
+    delay(3000); //Delay required otherwise wont reauth for some DAMN reason...
+    spotifyConnection.setRefreshToken(prefs.getString("refreshToken"));
+  }
+
+  //start server if token could not be refreshed
+  if(!spotifyConnection.accessTokenSet){
+    server.on("/", handleRoot);      //Which routine to handle at root location
+    server.on("/callback", handleCallbackPage);      //Which routine to handle at root location
+    server.begin();                  //Start server
+    Serial.println("HTTP server started");
+    //tft.println(WiFi.localIP());
+  }
+  else
+    serverOn = false;
+
 }//setup
 
 //////////////////////////////////////////////////////
@@ -1635,6 +1707,7 @@ void loop(){
         if(currDisplayFace != prevDisplayFace){
           prevDisplayFace = currDisplayFace;
           tft.fillScreen(TFT_BLACK);
+          prefs.putChar("lastFace", currDisplayFace);
         }
         displayDefault();
         break;
@@ -1643,6 +1716,7 @@ void loop(){
         if(currDisplayFace != prevDisplayFace){
           prevDisplayFace = currDisplayFace;
           tft.fillScreen(TFT_BLACK);
+          prefs.putChar("lastFace", currDisplayFace);
         }
         displayWeather();
         break;
@@ -1652,6 +1726,7 @@ void loop(){
           prevDisplayFace = currDisplayFace;
           tft.fillScreen(0x09C3);
           spotifyConnection.stateChanged = true;
+          prefs.putChar("lastFace", currDisplayFace);
           //tft.fillScreen(TFT_BLACK);
         }
         displaySpotify();
@@ -1659,13 +1734,6 @@ void loop(){
       
       case OTA_FACE:
         break;
-        // if(currDisplayFace != prevDisplayFace){
-        //   prevDisplayFace = currDisplayFace;
-        //   tft.fillScreen(TFT_BLACK);
-        //   displayOTA();
-        // }
-        // ArduinoOTA.handle();
-        // break;
       }
       refreshDisplay = false;
       //Serial.println(ESP.getFreeHeap(), DEC);
@@ -1763,9 +1831,11 @@ void loop(){
     ArduinoOTA.handle();
   }
 
-  delay(10);
+  delay(20);
+  baseTimer.update();
   button.tick();
   //Serial.println(ticks);
+
 }
 
 
