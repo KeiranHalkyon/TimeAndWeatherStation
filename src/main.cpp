@@ -115,7 +115,7 @@ const uint32_t displayUpdatet = 5*1000, //was 2000
 Timer baseTimer, refreshTimeTimer, refreshSensorTimer, hourlyTimer,
       refreshDisplayTimer, spotifyTimer, rdsTimer, weatherTimer, refreshInternetTimer;
 
-uint8_t currDisplayFace = 0,
+uint8_t currDisplayFace = 1,
         prevDisplayFace = -1,
         tftBrightness = 39,
         rotation = 2,
@@ -386,6 +386,22 @@ String removeBackslash(String text){
 
 void checkPower(){
   onBattery = (analogRead(batteryPin)>25);
+}
+
+const unsigned short* getIcon(char icon[]){
+  int iconNum = (icon[0] - '0')*10 + (icon[1] - '0');
+  switch(iconNum){
+    case 1 : return i01d;
+    case 2 : return i02d;
+    case 3 : return i03d;
+    case 4 : return i04d;
+    case 9 : return i09d;
+    case 10 :return i10d;
+    case 11 :return i11d;
+    case 13 :return i13d;
+    case 50 :return i50d;
+    default : return exclamation;
+  }
 }
 
 //////////////////////////////////////////////////////
@@ -1449,7 +1465,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     time[4] = '0' + now.minute() % 10;
     tft.loadFont("manrope-regular33", LittleFS);
     tft.setCursor(3, 23);
-    tft.fillRect(3,21,88,28,bg);           //time frame
+    tft.fillRect(3,21,89,28,bg);           //time frame
     tft.print(time);
     tft.unloadFont();
 
@@ -1482,20 +1498,19 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
 
     if(weatherUpdated || refresh){
       // weather icon
-      int icon = (currentIconAPI[0] - '0')*10 + (currentIconAPI[1] - '0');
-      // int icon = (forecastHourIconAPI[0][0] - '0')*10 + (forecastHourIconAPI[0][1] - '0');
+      // switch(icon){
+      //   case 1 : tft.pushImage(98,23,25,25,i01d); break;
+      //   case 2 : tft.pushImage(98,23,25,25,i02d); break;
+      //   case 3 : tft.pushImage(98,23,25,25,i03d); break;
+      //   case 4 : tft.pushImage(98,23,25,25,i04d); break;
+      //   case 9 : tft.pushImage(98,23,25,25,i09d); break;
+      //   case 10 : tft.pushImage(98,23,25,25,i10d); break;
+      //   case 11 : tft.pushImage(98,23,25,25,i11d); break;
+      //   case 13 : tft.pushImage(98,23,25,25,i13d); break;
+      //   case 50 : tft.pushImage(98,23,25,25,i50d); break;
+      // }
       tft.setSwapBytes(true);
-      switch(icon){
-        case 1 : tft.pushImage(98,23,25,25,i01d); break;
-        case 2 : tft.pushImage(98,23,25,25,i02d); break;
-        case 3 : tft.pushImage(98,23,25,25,i03d); break;
-        case 4 : tft.pushImage(98,23,25,25,i04d); break;
-        case 9 : tft.pushImage(98,23,25,25,i09d); break;
-        case 10 : tft.pushImage(98,23,25,25,i10d); break;
-        case 11 : tft.pushImage(98,23,25,25,i11d); break;
-        case 13 : tft.pushImage(98,23,25,25,i13d); break;
-        case 50 : tft.pushImage(98,23,25,25,i50d); break;
-      }
+      tft.pushImage(98, 23, 25, 25, getIcon(currentIconAPI));
       tft.setSwapBytes(false);
 
       //Online info
@@ -1514,7 +1529,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
 
     //show notif on song change
     if(spotifyConnection.stateChanged && spotifyConnection.isAvailable){
-      tft.fillRect(1, 93, 127, 68, bg);  // description + temps frame
+      tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
       tft.loadFont("manrope-semibold12", LittleFS);
       // char temp[50];
       // sprintf(temp,"%s",spotifyConnection.currentSong.artist);
@@ -1531,7 +1546,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     else if(displayDefaultState == 0){
       tft.loadFont("manrope-semibold12", LittleFS);
       tft.setTextColor(color, bg);
-      tft.fillRect(1, 93, 127, 68, bg);  // description + temps frame
+      tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
       if(now.hour() >= 20){
         printSplitString2(tomorrowSummaryAPI,20,3,94); 
         tft.fillRect(120, 136, 5, 5, TFT_GREENYELLOW);
@@ -1551,7 +1566,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     // 3hr forecasts
     else if(displayDefaultState >= 1){
       tft.loadFont("manrope-semibold12", LittleFS);
-      tft.fillRect(1, 93, 127, 26, bg);  // description frame
+      tft.fillRect(0, 93, 127, 26, bg);  // description frame
       // char tempStore[50];
       sprintf(tempStore,"In %dhrs : %s - %.1f'C", displayDefaultState*3, forecastHourDescAPI[displayDefaultState-1], forecastHourTempAPI[displayDefaultState-1]);
       printSplitString2(tempStore, 20, 3, 94);
@@ -1594,7 +1609,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     tft.setSwapBytes(true);
     tft.pushImage(98,23,25,25,exclamation);
     tft.setSwapBytes(false);
-    tft.fillRect(1, 93, 127, 68, bg);  // description + temps frame
+    tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
     tft.setCursor(3,94);
     tft.print("No Connection !");
     //Serial.print("Here");
@@ -1693,12 +1708,64 @@ void displaySpotify(){
   spotifyConnection.stateChanged = false;
 }
 
-void displayWeather(){
-  tft.setCursor(0,0);
-  tft.println("PLACEHOLDER");
-  //int sensorVal = 0;
+void displayWeather(uint16_t color, uint16_t bg){
+  tft.loadFont("manrope-semibold12");
+  tft.setSwapBytes(true);
+
+  //1st Segment
+  tft.drawFastVLine(94, 1, 28, color);   //right to time
+  tft.drawFastHLine(3, 31, 89, color);   //bottom to time
+  tft.drawFastHLine(97, 31, 28, color);   //bottom to icon
   
-  tft.println(analogRead(batteryPin));
+  tft.setCursor(3,4);
+  tft.printf("%.1f'C  %.0f mb\n", forecastHourTempAPI[0], forecastHourPressAPI[0]);
+  tft.setCursor(3,18);
+  tft.printf("%.0f%%  %.2f mm", forecastHourPopAPI[0]*100, forecastHourRainAPI[0]);
+  tft.pushImage(98, 4, 25, 25, getIcon(forecastHourIconAPI[0]));
+
+  //2nd Segment
+  tft.drawFastVLine(94, 34, 28, color);   //right to time
+  tft.drawFastHLine(3, 64, 89, color);   //bottom to time
+  tft.drawFastHLine(97, 64, 28, color);   //bottom to icon
+
+  tft.setCursor(3,37);
+  tft.printf("%.1f'C  %.0f mb\n", forecastHourTempAPI[1], forecastHourPressAPI[1]);
+  tft.setCursor(3,51);
+  tft.printf("%.0f%%  %.2f mm", forecastHourPopAPI[1]*100, forecastHourRainAPI[1]);
+  tft.pushImage(98, 37, 25, 25, getIcon(forecastHourIconAPI[1]));
+  
+  //3rd Segment
+  tft.drawFastVLine(94, 67, 28, color);   //right to time
+  tft.drawFastHLine(3, 97, 89, color);   //bottom to time
+  tft.drawFastHLine(97, 97, 28, color);   //bottom to icon
+
+  tft.setCursor(3,70);
+  tft.printf("%.1f'C  %.0f mb\n", forecastHourTempAPI[2], forecastHourPressAPI[2]);
+  tft.setCursor(3,84);
+  tft.printf("%.0f%%  %.2f mm", forecastHourPopAPI[2]*100, forecastHourRainAPI[2]);
+  tft.pushImage(98, 70, 25, 25, getIcon(forecastHourIconAPI[2]));
+  
+  //4th Segment
+  tft.drawFastVLine(94, 100, 28, color);   //right to time
+  tft.drawFastHLine(3, 130, 89, color);   //bottom to time
+  tft.drawFastHLine(97, 130, 28, color);   //bottom to icon
+
+  tft.setCursor(3,103);
+  tft.printf("%.1f'C  %.0f mb\n", forecastHourTempAPI[3], forecastHourPressAPI[3]);
+  tft.setCursor(3,117);
+  tft.printf("%.0f%%  %.2f mm", forecastHourPopAPI[3]*100, forecastHourRainAPI[3]);
+  tft.pushImage(98, 103, 25, 25, getIcon(forecastHourIconAPI[3]));
+  
+  //5th Segment
+  tft.drawFastVLine(94, 133, 28, color);   //right to time
+
+  tft.setCursor(3,133);
+  tft.printf("%.1f'C  %.0f mb\n", forecastHourTempAPI[4], forecastHourPressAPI[4]);
+  tft.setCursor(3,147);
+  tft.printf("%.0f%%  %.2f mm", forecastHourPopAPI[4]*100, forecastHourRainAPI[4]);
+  tft.pushImage(98, 133, 25, 25, getIcon(forecastHourIconAPI[4]));
+
+  tft.setSwapBytes(false);
 }
 
 void displayOTA(){
@@ -1759,17 +1826,19 @@ void refreshDisplay(){
         break;
       }
 
-      case WEATHER_SUMMARY_FACE:
+      case WEATHER_SUMMARY_FACE:{
+        uint16_t color = 0xFD80, bg = TFT_BLACK;
         if(currDisplayFace != prevDisplayFace){
           prevDisplayFace = currDisplayFace;
           tft.fillScreen(TFT_BLACK);
           prefs.putChar("lastFace", currDisplayFace);
           spotifyTimer.setInterval(spotifyLongt);
+          displayWeather(color, bg);
         }
-        displayWeather();
         break;
+      }
 
-      case SPOTIFY_FACE:
+      case SPOTIFY_FACE:{
         if(currDisplayFace != prevDisplayFace){
           prevDisplayFace = currDisplayFace;
           tft.fillScreen(0x09C3);
@@ -1783,7 +1852,8 @@ void refreshDisplay(){
         }
         displaySpotify();
         break;
-      
+      }
+
       case OTA_FACE:{
         if(currDisplayFace != prevDisplayFace){
           prevDisplayFace = currDisplayFace;
@@ -1802,7 +1872,7 @@ void refreshSpotify(){
 }
 
 void updateRDS(){
-  if(internetAvailable)
+  if(internetAvailable){
     if(!sendDataToRDS(sumTempBMP/sensorReadingCount,sumPressureBMP/sensorReadingCount,sumTempAHT/sensorReadingCount,sumHumidityAHT/sensorReadingCount)){
       Serial.println("Failed RDS upload");
       checkInternet();
@@ -1811,6 +1881,7 @@ void updateRDS(){
       sumTempBMP = sumTempAHT = sumHumidityAHT = sumPressureBMP = 0;
       sensorReadingCount = 0;
     }
+  }
 }
 
 void updateWeather(){
