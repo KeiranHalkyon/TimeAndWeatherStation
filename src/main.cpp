@@ -27,6 +27,8 @@
                 ii) Show battery status if possible
             j) Spotify Player info (overkill) - DONE
                 i) Determine polling rate - YET TO DETERMINE
+            h) Make the summary and default face more user friendly - YET TO DO
+            i) Make header file - YET TO DO
 */
 /////////////////////////////////////////////////////
 //
@@ -66,6 +68,7 @@
 #include "TFT_eSPI.h"
 #include <Preferences.h>
 #include <timer.h>
+#include <timerManager.h>
 
 #include "user_constants.hpp"
 #include "Web_Fetch.h"
@@ -85,33 +88,32 @@ const uint8_t tftPow = 16,//3
               tftCLK = 14,
               tftMOSI = 13,
               btnInput = 12,
-              extIntrpt = 16; //3
+              extIntrpt = 16,
+              batteryPin = 17; //3
 
 bool  isTimeSetFromNTP = false,
-      refreshDisplay = true,
-      refreshSensors = true,
-      refreshTime = true,
-      startInput = false,
-      isInputOngoing = false,
-      sec5over = false,
-      sec10over = false,
-      min1over = false,
-      min5over = true,
-      internetAvailable = false;
+      internetAvailable = false,
+      weatherUpdated = false,
+      sensorUpdated = false,
+      updateDot = false,
+      onBattery = false,
+      prevOnBattery = false;
 
 unsigned long lastInternetRefresh = 0,
       checkInternetInterval = 60000;
 
-//update timeframes in multiples of 500ms
-const uint16_t displayUpdatet = 500/500,
-         sensorsUpdatet = 2000/500,
-         timeUpdatet = 500/500,
-         sec5timer = 5000/500,
-         sec10timer = 10000/500,
-         min1timer = 60000/500,
-         min5timer = 300000/500;
+//update timeframes in ms
+const uint32_t displayUpdatet = 5*1000, //was 2000
+         sensorsUpdatet =       5*1000,
+         timeUpdatet =             500,
+         spotifyLongt =        10*1000,
+         spotifyShortt =        5*1000,
+         rdst =              5*60*1000,
+         weathert =          5*60*1000,
+         internetUpdatet =   2*60*1000;
 
-Timer baseTimer;
+Timer baseTimer, refreshTimeTimer, refreshSensorTimer, hourlyTimer,
+      refreshDisplayTimer, spotifyTimer, rdsTimer, weatherTimer, refreshInternetTimer;
 
 uint8_t currDisplayFace = 0,
         prevDisplayFace = -1,
@@ -134,10 +136,14 @@ RTC_DS1307 rtc;
 DateTime now;//Time object, represents latest updated time from rtc
 
 Adafruit_BMP280 bmp; // I2C
-float tempBMP, pressureBMP, altitudeBMP;
+float tempBMP, pressureBMP, altitudeBMP,
+      sumTempBMP=0, sumPressureBMP=0;
 
 Adafruit_AHTX0 aht;
-float humidityAHT, tempAHT;
+float humidityAHT, tempAHT,
+      sumHumidityAHT = 0, sumTempAHT = 0;
+
+uint16_t sensorReadingCount = 0;
 
 //api results
 float currentTempAPI=0.0f, currentPressAPI=0.0f, currentFeelsLikeAPI=0.0f, currentHumidityAPI=0.0f, currentMaxTempAPI = 0.0f, currentMinTempAPI = 0.0f,
@@ -167,6 +173,7 @@ const char daysOfTheWeekShort[7][4] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"
 //
 //////////////////////////////////////////////////////
 
+/*
 IRAM_ATTR void checkTicks(){
 
   //TODO : why does button.tick() in this ISR crash album art download???????????
@@ -198,6 +205,7 @@ IRAM_ATTR void checkTicks(){
   //yield();
   //button.tick(); 
 }
+*/
 
 IRAM_ATTR void checkClicks(){
   button.tick();
@@ -234,9 +242,8 @@ void setRTCfromNTP(){ //set time to rtc from ntp, using unix timestamp, begins t
   Serial.println();
 }
 
+//timeout of 0(zero) means wait forever, waitForTimeout being false means donot wait, just begin connection and proceed
 bool connectToWifi(bool waitForTimeout = true, unsigned long timeout = 500L){
-  //timeout of 0(zero) means wait forever
-  //waitForTimeout being false means donot wait, just begin connection and proceed
 
   WiFi.begin(String(ssid), String(password));
   unsigned long lastTry = millis();
@@ -294,30 +301,32 @@ void printTemp(bool sensor = false){
   //sensor = false means bmp, true means AHT
   char tempStr[6];
   if(!sensor)
-    dtostrf(tempBMP, 4, 2, tempStr);
+    dtostrf(tempBMP, 3, 1, tempStr);
   else
-    dtostrf(tempAHT, 4, 2, tempStr);
+    dtostrf(tempAHT, 3, 1, tempStr);
 
   tft.print(tempStr);
 }
 
 void printPressure(){
   char pressureStr[8];
-  dtostrf(pressureBMP, 6, 2, pressureStr);
+  dtostrf(pressureBMP, 4, 0, pressureStr);
   tft.print(pressureStr);
 }
 
 void printHumidity(){
   char humidityStr[6];
-  dtostrf(humidityAHT, 4, 2, humidityStr);
+  dtostrf(humidityAHT, 3, 1, humidityStr);
   tft.print(humidityStr);
 }
 
+void refreshDisplay();
 // this function will be called when the button was pressed 1 time only.
 void singleClick() {
   currDisplayFace = (currDisplayFace+1)%NO_OF_FACES;
   Serial.print("Current Face : ");
   Serial.println(currDisplayFace);
+  refreshDisplay();
 } // singleClick
 
 // this function will be called when the button was pressed 2 times in a short timeframe.
@@ -343,18 +352,19 @@ void multiClick() {
 } // multiClick
 
 // this function will be called when the button was held down for 1 second or more.
-void pressStart() {
+void longPressStart() {
   inputStartTime = millis();
   Serial.println("pressStart()");
   pressStartTime = millis() - 1000; // as set in setPressMs()
 } // pressStart()
 
-// this function will be called when the button was released after a long hold.
-void pressStop() {
-  inputStartTime = millis();
-  Serial.print("pressStop(");
-  Serial.print(millis() - pressStartTime);
-  Serial.println(") detected.");
+// long press button to force refresh RTC from NTP
+void longPressStop() {
+  // inputStartTime = millis();
+  // Serial.print("pressStop(");
+  // Serial.print(millis() - pressStartTime);
+  Serial.println("Resetting time from NTP");
+  setRTCfromNTP();
 } // pressStop()
 
 void duringLongPress(){
@@ -372,6 +382,10 @@ String removeBackslash(String text){
     result += ch;
   }
   return result;
+}
+
+void checkPower(){
+  onBattery = (analogRead(batteryPin)>25);
 }
 
 //////////////////////////////////////////////////////
@@ -402,14 +416,14 @@ String getValue(HTTPClient &http, String key) {
   while (http.connected() && (len > 0 || len == -1)) {
     size_t size = stream->available();
     if (size) {
-      int c = stream->readBytes(char_buff, ((size > sizeof(char_buff)) ? sizeof(char_buff) : size));
+      [[maybe_unused]] int c = stream->readBytes(char_buff, ((size > sizeof(char_buff)) ? sizeof(char_buff) : size));
       if (found) {
         if (seek && char_buff[0] != ':') {
           continue;
         } else if(char_buff[0] != '\n'){
             if(seek && char_buff[0] == ':'){
                 seek = false;
-                int c = stream->readBytes(char_buff, 1);
+                [[maybe_unused]] int c = stream->readBytes(char_buff, 1);
             }else{
                 ret_str += char_buff[0];
             }
@@ -508,6 +522,34 @@ void printSplitString(String text,int maxLineSize, int xPos, int yPos)
         // free(printable);
     }
     // Serial.println(ESP.getFreeHeap());
+}
+
+void printSplitString2(char text[], int maxLineSize, int xPos, int yPos){
+  int lineStart = 0, currentPos = 0, lastPos = -1, currentCount = 0, flag = 0;
+  tft.setCursor(xPos, yPos);
+  while(true){
+    while(text[currentPos] != '\0' && currentCount <= maxLineSize){
+      if(text[currentPos] == ' ')
+        lastPos = currentPos;
+      currentPos++;
+      currentCount++;
+    }
+    if(text[currentPos] == '\0')
+      flag = 1;
+    else
+      text[lastPos] = '\0';
+    tft.setCursor(xPos,tft.getCursorY());
+    tft.println(&text[lineStart]);
+    if(flag==1)
+      break;
+    else{
+      text[lastPos] = ' ';
+      currentPos = lastPos + 1;
+      currentCount = 0;
+      lastPos = -1;
+      lineStart = currentPos;
+    }
+  }
 }
 
 //Create spotify connection class
@@ -616,7 +658,6 @@ public:
       //bool refresh = false;
       // Check if the request was successful
       if (httpResponseCode == 200) {
-          
           String currentSongProgress = getValue(https,"progress_ms");
           currentSongPositionMs = currentSongProgress.toFloat();
           String imageLink = "";
@@ -648,25 +689,24 @@ public:
           https.end();
           //Serial.println(ESP.getFreeHeap());
           // listLittleFS();
-          if (songId != currentSong.Id){
-              
-              if(LittleFS.exists("/albumArt.jpg") == true) {
-                  LittleFS.remove("/albumArt.jpg");
-              }
-              // Serial.println("trying to get album art");
-              bool loaded_ok = getFile(imageLink.substring(1,imageLink.length()-1).c_str(), "/albumArt.jpg"); // Note name preceded with "/"
-              Serial.println("Image load was: ");
-              Serial.println(loaded_ok);
-              //refresh = true;
-              songChanged = true;
-              stateChanged = true;
-              //tft.fillScreen(TFT_BLACK);
+          if (songId != currentSong.Id){ 
+            if(LittleFS.exists("/albumArt.jpg") == true) {
+                LittleFS.remove("/albumArt.jpg");
+            }
+            // Serial.println("trying to get album art");
+            bool loaded_ok = getFile(imageLink.substring(1,imageLink.length()-1).c_str(), "/albumArt.jpg"); // Note name preceded with "/"
+            Serial.println("Image load was: ");
+            Serial.println(loaded_ok);
+            //refresh = true;
+            songChanged = true;
+            stateChanged = true;
+            //tft.fillScreen(TFT_BLACK);
+            currentSong.album = removeBackslash(albumName.substring(1,albumName.length()-1));
+            currentSong.artist = removeBackslash(artistName.substring(1,artistName.length()-1));
+            currentSong.song = removeBackslash(songName.substring(1,songName.length()-1));
+            currentSong.Id = songId;
+            currentSong.isLiked = findLikedStatus(songId);
           }
-          currentSong.album = removeBackslash(albumName.substring(1,albumName.length()-1));
-          currentSong.artist = removeBackslash(artistName.substring(1,artistName.length()-1));
-          currentSong.song = removeBackslash(songName.substring(1,songName.length()-1));
-          currentSong.Id = songId;
-          currentSong.isLiked = findLikedStatus(songId);
           success = true;
       } else {
           Serial.print("Error getting track info: ");
@@ -1334,97 +1374,231 @@ unsigned long myAbs(long val){
   return (val>0)? val : -val;
 }
 
-bool checkInternet(bool force = false){
-  if(force)
-    return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
-  else if(internetAvailable && WiFi.isConnected())
-    return true;
-  else if(WiFi.isConnected() && (myAbs(millis()-lastInternetRefresh) > checkInternetInterval || !rtc.isrunning())){
-    lastInternetRefresh = millis();
-    return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
-  }
+void checkInternet(){ // param : bool force = false
+  // if(force)
+  //   return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
+  // else if(internetAvailable && WiFi.isConnected())
+  //   return true;
+  // else if(WiFi.isConnected() && (myAbs(millis()-lastInternetRefresh) > checkInternetInterval || !rtc.isrunning())){
+  //   lastInternetRefresh = millis();
+  //   return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
+  // }
+  // else
+  //   return false;
+  if(WiFi.status() == WL_CONNECTED)
+    internetAvailable = Ping.ping(String(remote_host).c_str(),1);
   else
-    return false;
+    internetAvailable = false;
 }
 
+void drawPixelFrame(uint16_t gap){
+  for(uint16_t i = gap-1; i < 128; i+=gap)
+    for(uint16_t j = gap-1; j < 160; j+=gap){
+      tft.drawPixel(i,j,TFT_YELLOW);
+    }
+}
+
+int8_t displayDefaultState = 0; 
+char tempStore[60];
 //default face, includes a bit of everything
-void displayDefault(){
-  uint16_t color = 0xFD80, bg = TFT_BLACK;
-  // uint16_t ypos = 0;
-  //tft.fillScreen(TFT_BLACK);
-  tft.setCursor(2,4);
-  tft.setTextColor(0xFD80, TFT_BLACK);
-  //tft.setTextFont(6);
-  //tft.setTextSize(1);
+void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
+  //uint16_t color = 0xFD80, bg = TFT_BLACK;
+  tft.setTextColor(color, bg);
 
-  char dateStr[9] = "00/00/00";
-  dateStr[0] = '0' + now.day() / 10;
-  dateStr[1] = '0' + now.day() % 10;
-  dateStr[3] = '0' + now.month() / 10;
-  dateStr[4] = '0' + now.month() % 10;
-  dateStr[6] = '0' + (now.year() % 100) / 10;
-  dateStr[7] = '0' + now.year() % 10;
-  tft.loadFont("manrope-regular16");
-  tft.println(dateStr);
-  //printDay();
-  tft.println(daysOfTheWeekFull[now.dayOfTheWeek()]);
-  tft.unloadFont();
+  if(refresh){
+    displayDefaultState = 0;
+    // Serial.print("Refresh default display");
+  }
 
-  //printTime();
+  //print update/refresh indicator
+  if(updateDot)
+    tft.drawPixel(125,2,color);
+  else
+    tft.drawPixel(125,2,bg);
+  updateDot = !updateDot;
 
-  char hour[3] = "00", min[3] = "00",
-    colon = (now.second() & 1)? ':' : ' ' ;
-  hour[0] = '0' + now.hour() / 10;
-  hour[1] = '0' + now.hour() % 10;
-  min[0] = '0' + now.minute() / 10;
-  min[1] = '0' + now.minute() % 10;
-
-  tft.loadFont("manrope-regular40", LittleFS);
-  tft.setTextColor(color, bg, true);
-  tft.print(hour);
-  tft.print(colon);
-  //tft.setCursor(70,0);
-  tft.println(min);
-  tft.unloadFont();
-
-  //tft.setTextFont(1);
-  //tft.setCursor(tft.getCursorX(),tft.getCursorY()-10);
-  //tft.setTextSize(2);
+  //print date
+  if(prevHour != now.hour() || refresh){
+    tft.setCursor(2, 3);
+    char dateStr[9] = "00/00/00";
+    dateStr[0] = '0' + now.day() / 10;
+    dateStr[1] = '0' + now.day() % 10;
+    dateStr[3] = '0' + now.month() / 10;
+    dateStr[4] = '0' + now.month() % 10;
+    dateStr[6] = '0' + (now.year() % 100) / 10;
+    dateStr[7] = '0' + now.year() % 10;
+    tft.loadFont("manrope-semibold16", LittleFS);
+    tft.fillRect(2,2,75,14,bg);             //date frame
+    tft.print(dateStr);
   
-  tft.println();
+    //print day
+    tft.setCursor(84, 3);
+    tft.fillRect(83,2,35,14,bg);            //day frame
+    tft.print(daysOfTheWeekShort[now.dayOfTheWeek()]);
+    tft.unloadFont();
 
-  tft.setTextFont(1);
-  tft.setTextSize(1);
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+2);
-  tft.print(F("BMP 'C : "));
-  printTemp();
-  tft.println();
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.print(F("Press mb : "));
-  printPressure();
-  tft.println();
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.print(F("Humid Rh : "));
-  printHumidity();
-  tft.println();
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.print(F("AHT 'C : "));
-  printTemp(true);
-  tft.println();
+    prevHour = now.hour();
+  }
 
-  char tempStr[17];
-  sprintf(tempStr,"%s%.2f","Temp 'C : ",currentTempAPI);
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.println(tempStr);
-  sprintf(tempStr,"%s%.2f","Feels 'C : ",currentFeelsLikeAPI);
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.println(tempStr);
-  sprintf(tempStr,"%s%.2f","Press mb : ",currentPressAPI);
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.println(tempStr);
-  sprintf(tempStr,"%s%.2f","Humid Rh : ", currentHumidityAPI);
-  tft.setCursor(tft.getCursorX(),tft.getCursorY()+1);
-  tft.println(tempStr);
+  //print time
+  if(prevMinute != now.minute() || refresh){
+    char time[6] = "00:00";
+    time[0] = '0' + now.hour() / 10;
+    time[1] = '0' + now.hour() % 10;
+    time[3] = '0' + now.minute() / 10;
+    time[4] = '0' + now.minute() % 10;
+    tft.loadFont("manrope-regular33", LittleFS);
+    tft.setCursor(3, 23);
+    tft.fillRect(3,21,88,28,bg);           //time frame
+    tft.print(time);
+    tft.unloadFont();
+
+    prevMinute = now.minute();
+  }
+
+  //Local Info
+  if(sensorUpdated || refresh){
+    tft.loadFont("manrope-semibold12", LittleFS);
+    tft.fillRect(67,54,53,36,bg);
+    tft.setCursor(68,55);
+    tft.printf("%.1f 'C ", tempAHT);
+    tft.setCursor(68, 67);
+    tft.printf("%.0f mb ", pressureBMP);
+    tft.setCursor(68, 79);
+    tft.printf("%.1f %% ", humidityAHT);
+    tft.fillRect(120, 55, 5, 33, TFT_DARKGREEN);
+
+    if(onBattery)
+      tft.fillRect(120,3,5,12,TFT_ORANGE);
+    else
+      tft.fillRect(120,3,5,12,TFT_DARKGREEN);
+
+    sensorUpdated = false;
+  }
+
+  if(internetAvailable){
+    if(displayDefaultState < 0)
+      displayDefaultState = 0;
+
+    if(weatherUpdated || refresh){
+      // weather icon
+      int icon = (currentIconAPI[0] - '0')*10 + (currentIconAPI[1] - '0');
+      // int icon = (forecastHourIconAPI[0][0] - '0')*10 + (forecastHourIconAPI[0][1] - '0');
+      tft.setSwapBytes(true);
+      switch(icon){
+        case 1 : tft.pushImage(98,23,25,25,i01d); break;
+        case 2 : tft.pushImage(98,23,25,25,i02d); break;
+        case 3 : tft.pushImage(98,23,25,25,i03d); break;
+        case 4 : tft.pushImage(98,23,25,25,i04d); break;
+        case 9 : tft.pushImage(98,23,25,25,i09d); break;
+        case 10 : tft.pushImage(98,23,25,25,i10d); break;
+        case 11 : tft.pushImage(98,23,25,25,i11d); break;
+        case 13 : tft.pushImage(98,23,25,25,i13d); break;
+        case 50 : tft.pushImage(98,23,25,25,i50d); break;
+      }
+      tft.setSwapBytes(false);
+
+      //Online info
+      tft.loadFont("manrope-semibold12", LittleFS);
+      tft.fillRect(2,54,54,36,bg);
+      tft.setCursor(3,55);
+      tft.printf("%.1f 'C ", currentTempAPI);
+      tft.setCursor(3, 67);
+      tft.printf("%.0f mb ", currentPressAPI);
+      tft.setCursor(3, 79);
+      tft.printf("%.1f %% ", currentHumidityAPI);
+      tft.fillRect(56, 55, 5, 33, TFT_DARKCYAN);
+
+      weatherUpdated = false;
+    }
+
+    //show notif on song change
+    if(spotifyConnection.stateChanged && spotifyConnection.isAvailable){
+      tft.fillRect(1, 93, 127, 68, bg);  // description + temps frame
+      tft.loadFont("manrope-semibold12", LittleFS);
+      // char temp[50];
+      // sprintf(temp,"%s",spotifyConnection.currentSong.artist);
+      printSplitString(spotifyConnection.currentSong.artist, 15, 3, 109);
+      printSplitString(spotifyConnection.currentSong.song, 20, 3, (tft.getCursorY() > 124)? tft.getCursorY()+4 : 124);
+      tft.setSwapBytes(true);
+      tft.pushImage(98, 97, 25, 25, spotify);
+      tft.setSwapBytes(false);
+
+      spotifyConnection.stateChanged = false;
+      displayDefaultState = -1;
+    }
+    //today or tomorrow weather description
+    else if(displayDefaultState == 0){
+      tft.loadFont("manrope-semibold12", LittleFS);
+      tft.setTextColor(color, bg);
+      tft.fillRect(1, 93, 127, 68, bg);  // description + temps frame
+      if(now.hour() >= 20){
+        printSplitString2(tomorrowSummaryAPI,20,3,94); 
+        tft.fillRect(120, 136, 5, 5, TFT_GREENYELLOW);
+      }
+      else{
+        printSplitString2(currentSummaryAPI,20,3,94);
+        tft.fillRect(120, 136, 5, 5, TFT_RED);
+      }
+      tft.drawFastHLine(3,143,123,color);     //bottom to description
+      tft.setCursor(1,147);
+      if(now.hour() >= 20)
+        tft.printf("%.1f'C | %.1f'C | %.1f'C", tomorrowMaxTempAPI, tomorrowMinTempAPI, tomorrowFeelsLikeAPI);
+      else
+        tft.printf("%.1f'C | %.1f'C | %.1f'C", currentMaxTempAPI, currentMinTempAPI, currentFeelsLikeAPI);
+      tft.unloadFont();
+    }
+    // 3hr forecasts
+    else if(displayDefaultState >= 1){
+      tft.loadFont("manrope-semibold12", LittleFS);
+      tft.fillRect(1, 93, 127, 26, bg);  // description frame
+      // char tempStore[50];
+      sprintf(tempStore,"In %dhrs : %s - %.1f'C", displayDefaultState*3, forecastHourDescAPI[displayDefaultState-1], forecastHourTempAPI[displayDefaultState-1]);
+      printSplitString2(tempStore, 20, 3, 94);
+
+      if(displayDefaultState == 1){
+        tft.fillRect(1, 120, 127, 42, bg);  // Rain frame
+        tft.drawFastHLine(3, tft.getCursorY()-1, 123, color); // below description
+
+        int index = -1;
+        for(int i = 0; i < FORECAST_RANGE; i++)
+          if(forecastHourPopAPI[i] >= 0.3f && forecastHourRainAPI[i] >= 0.05f){
+            index = i;
+            break;
+          }
+        
+        if(index < 0){
+          sprintf(tempStore,"No rain in next %d hours", (FORECAST_RANGE-1)*3);
+          printSplitString2(tempStore, 20, 3, tft.getCursorY() + 2);
+        }
+        else{
+          sprintf(tempStore,"Rain in next %d hours", (index+1)*3);
+          printSplitString2(tempStore, 20, 3, tft.getCursorY() + 2);
+          tft.setCursor(3, tft.getCursorY());
+          tft.printf("Chance : %.0f %%\n",forecastHourPopAPI[index]*100);
+          tft.setCursor(3, tft.getCursorY());
+          tft.printf("Amount : %.2f mm",forecastHourRainAPI[index]);
+        }
+      }
+    }
+    tft.unloadFont();
+
+    displayDefaultState++;
+    if(displayDefaultState>FORECAST_RANGE)
+      displayDefaultState = 0;
+  }
+  else if(displayDefaultState >= 0){
+    displayDefaultState = -2;
+    tft.loadFont("manrope-semibold12", LittleFS);
+    tft.setTextColor(color, bg);
+    tft.setSwapBytes(true);
+    tft.pushImage(98,23,25,25,exclamation);
+    tft.setSwapBytes(false);
+    tft.fillRect(1, 93, 127, 68, bg);  // description + temps frame
+    tft.setCursor(3,94);
+    tft.print("No Connection !");
+    //Serial.print("Here");
+  }
 }
 
 //spotify face, but only the time is updated regularly
@@ -1437,6 +1611,7 @@ void displaySpotify(){
     tft.loadFont("leelawad12", LittleFS);
     tft.setTextDatum(BL_DATUM);
     tft.setTextWrap(true);
+    tft.setSwapBytes(false);
     //tft.setCursor(0,87);
     uint8_t textStartX = 8, textStartY = 87;
 
@@ -1521,6 +1696,9 @@ void displaySpotify(){
 void displayWeather(){
   tft.setCursor(0,0);
   tft.println("PLACEHOLDER");
+  //int sensorVal = 0;
+  
+  tft.println(analogRead(batteryPin));
 }
 
 void displayOTA(){
@@ -1528,6 +1706,179 @@ void displayOTA(){
   tft.println("OTA Enabled");
   Serial.println("OTA Enabled");
 }
+
+//////////////////////////////////////////////////////
+
+void refreshSensors(){
+  //get fresh data
+  refreshBMP();
+  refreshAHT();
+  checkPower();
+
+  //calculate sum for averages
+  sumTempBMP += tempBMP;
+  sumPressureBMP += pressureBMP;
+  sumHumidityAHT += humidityAHT;
+  sumTempAHT += tempAHT;
+
+  sensorReadingCount++;
+
+  sensorUpdated = true;
+}
+
+void refreshDisplay(){
+  switch (currDisplayFace)
+    {
+      case DEFAULT_FACE:{
+        //colors
+        uint16_t color = 0xFD80, bg = TFT_BLACK;
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(TFT_BLACK);
+          //tft.fillScreen(TFT_DARKGREY);
+          prefs.putChar("lastFace", currDisplayFace);
+          spotifyTimer.setInterval(spotifyLongt);
+          //drawPixelFrame(5);
+
+          //drawing the fixed frames
+          tft.drawFastVLine(79, 3, 14, color);    //right to date
+          tft.drawFastHLine(3, 18, 75, color);    //bottom to date
+          tft.drawFastHLine(81, 18, 12, color);   //bottom to day
+          tft.drawFastHLine(96, 18, 29, color);   //bottom to day
+          tft.drawFastHLine(3, 51, 60, color);   //bottom to time
+          tft.drawFastHLine(66, 51, 27, color);   //bottom to time
+          tft.drawFastHLine(96, 51, 29, color);   //bottom to icon
+          tft.drawFastVLine(94, 21, 29, color);   //right to time
+          tft.drawFastVLine(64, 53 , 37, color);  //right to online info
+          tft.drawFastHLine(3, 91, 60, color);   //bottom to online
+          tft.drawFastHLine(66, 91, 60, color);   //bottom to actual
+          displayDefault(color, bg, true);
+        }
+        else
+          displayDefault(color, bg);
+        break;
+      }
+
+      case WEATHER_SUMMARY_FACE:
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(TFT_BLACK);
+          prefs.putChar("lastFace", currDisplayFace);
+          spotifyTimer.setInterval(spotifyLongt);
+        }
+        displayWeather();
+        break;
+
+      case SPOTIFY_FACE:
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(0x09C3);
+          spotifyConnection.stateChanged = true;
+          prefs.putChar("lastFace", currDisplayFace);
+          if(onBattery)
+            spotifyTimer.setInterval(spotifyShortt*2);
+          else
+            spotifyTimer.setInterval(spotifyShortt);
+          //tft.fillScreen(TFT_BLACK);
+        }
+        displaySpotify();
+        break;
+      
+      case OTA_FACE:{
+        if(currDisplayFace != prevDisplayFace){
+          prevDisplayFace = currDisplayFace;
+          tft.fillScreen(TFT_BLACK);
+          displayOTA();
+        }
+        break;
+      }
+      //Serial.println(ESP.getFreeHeap(), DEC);
+    }
+}
+
+void refreshSpotify(){
+  if(internetAvailable)
+    spotifyConnection.getTrackInfo();
+}
+
+void updateRDS(){
+  if(internetAvailable)
+    if(!sendDataToRDS(sumTempBMP/sensorReadingCount,sumPressureBMP/sensorReadingCount,sumTempAHT/sensorReadingCount,sumHumidityAHT/sensorReadingCount)){
+      Serial.println("Failed RDS upload");
+      checkInternet();
+    }
+    else{
+      sumTempBMP = sumTempAHT = sumHumidityAHT = sumPressureBMP = 0;
+      sensorReadingCount = 0;
+    }
+}
+
+void updateWeather(){
+  if(internetAvailable){
+    if(!getApiWeatherCurrent()){
+      Serial.println("Failed to fetch current weather");
+      checkInternet();
+    }
+    else
+      weatherUpdated = true;
+  }
+}
+
+void hourlyTask(){
+  //TODO : the tasks are done in non blocking success/failure, deal with it somehow
+  if(hourTaskCount == 0){
+      //make hourTask faster if it is called for first time in the hour
+      hourlyTimer.setInterval(3000);
+    }
+  
+  if(internetAvailable){
+    bool success = false;
+    switch(hourTaskCount){
+      case 0:
+        checkInternet();
+        refreshInternetTimer.reset();
+        success = true;
+        break;
+      case 1 :
+        success = getApiWeather3HrForecast();
+        break;
+      case 2 :
+        success = getApiWeatherDailyForecast();
+        break;
+      case 3 :
+        if(spotifyConnection.accessTokenSet)
+          success = spotifyConnection.refreshAuth();
+        break;
+      case 4 :
+        success = getApiWeatherCurrent();
+        weatherTimer.reset();
+        break;
+    }
+    
+    if(success){
+      Serial.print("Success at hour task : ");
+      Serial.println(hourTaskCount);
+    }
+    else{
+      Serial.print("Failure at hour task : ");
+      Serial.println(hourTaskCount);
+    }
+
+    hourTaskCount++;
+    if(hourTaskCount>4){
+      hourTaskCount = 0;
+      weatherUpdated = true;
+      //set timer interval to normal 1 hour time
+      hourlyTimer.setInterval((60-now.minute())*60000); //wait till next hour
+    }
+  }
+}
+
+// void afterBoot(){
+//   getApiWeatherCurrent();
+//   getApiWeather3HrForecast();
+//   getApiWeatherDailyForecast();
+// }
 
 //////////////////////////////////////////////////////
 //
@@ -1566,8 +1917,8 @@ void setup(){
   }
 
   //for brightness control of tft screen, we will use pwm
-  analogWriteRange(40);
-  analogWriteFreq(48); //lowered from 72
+  // analogWriteRange(40);
+  // analogWriteFreq(48); //lowered from 72
   //analogWrite(tftPow,tftBrightness);
 
   //initiate TFT display
@@ -1585,9 +1936,9 @@ void setup(){
   button.attachClick(singleClick);
   // button.attachDoubleClick(doubleClick);
   // button.attachMultiClick(multiClick);
-  // button.setPressMs(400); // that is the time when LongPressStart is called
-  // button.attachLongPressStart(pressStart);
-  // button.attachLongPressStop(pressStop);
+  button.setPressMs(400); // that is the time when LongPressStart is called
+  button.attachLongPressStart(longPressStart);
+  button.attachLongPressStop(longPressStop);
 
   // //perhaps use long press instead of double click
   // button.attachDuringLongPress(duringLongPress);
@@ -1603,15 +1954,6 @@ void setup(){
   if(rtc.readSqwPinMode() != DS1307_OFF)
     rtc.writeSqwPinMode(DS1307_OFF);
 
-  baseTimer.setInterval(500);
-  baseTimer.setCallback(checkTicks);
-  baseTimer.start();
-
-  //get last display face
-  if(prefs.isKey("lastFace")){
-    currDisplayFace = prefs.getChar("lastFace");
-  }
-
   for(int i = 0 ; i < 10; i++){
     parts[i] = (char*)malloc(sizeof(char) * 20);
   }
@@ -1626,7 +1968,6 @@ void setup(){
   //Begin OTA service
   
   //Setup Arduino OTA
-
   ArduinoOTA.onStart([]() {
     //detach btn and rtc interrupt
     detachInterrupt(digitalPinToInterrupt(btnInput));
@@ -1638,33 +1979,35 @@ void setup(){
       LittleFS.end();
     }
   });
-  
   ArduinoOTA.onEnd([]() {
     tft.println("OTA succeeded");
     tft.println("Rebooting...");
     prefs.putChar("lastFace", 0);
   });
-
   ArduinoOTA.onError([](ota_error_t error) {
     Serial.printf("Error[%u]", error);
     tft.printf("Error %u",error);
 
     //Reattach interupts
-    attachInterrupt(digitalPinToInterrupt(btnInput), checkTicks, CHANGE);
+    // attachInterrupt(digitalPinToInterrupt(btnInput), checkTicks, CHANGE);
     attachInterrupt(digitalPinToInterrupt(extIntrpt), checkClicks, CHANGE);
   });
-
   ArduinoOTA.setHostname("esp8266");
   // ArduinoOTA.setPassword("123");
   ArduinoOTA.begin();
 
-  //check if refresh token is already present
   prefs.begin("spotify");
+
+  //get last display face
+  if(prefs.isKey("lastFace")){
+    currDisplayFace = prefs.getChar("lastFace");
+  }
+
+  //check if refresh token is already present
   if(prefs.isKey("refreshToken")){
     delay(3000); //Delay required otherwise wont reauth for some DAMN reason...
     spotifyConnection.setRefreshToken(prefs.getString("refreshToken"));
   }
-
   //start server if token could not be refreshed
   if(!spotifyConnection.accessTokenSet){
     server.on("/", handleRoot);      //Which routine to handle at root location
@@ -1676,6 +2019,34 @@ void setup(){
   else
     serverOn = false;
 
+  //Setup timer functions
+  // baseTimer.setInterval(500);
+  // baseTimer.setCallback(checkTicks);
+  // baseTimer.start();
+  refreshTimeTimer.setInterval(timeUpdatet);
+  refreshTimeTimer.setCallback(refreshTimeFromRTC);
+  refreshSensorTimer.setInterval(sensorsUpdatet);
+  refreshSensorTimer.setCallback(refreshSensors);
+  refreshDisplayTimer.setInterval(displayUpdatet);
+  refreshDisplayTimer.setCallback(refreshDisplay);
+  spotifyTimer.setInterval(spotifyLongt);
+  spotifyTimer.setCallback(refreshSpotify);
+  rdsTimer.setInterval(rdst); 
+  rdsTimer.setCallback(updateRDS); 
+  weatherTimer.setInterval(weathert);
+  weatherTimer.setCallback(updateWeather);
+  hourlyTimer.setCallback(hourlyTask);
+  hourlyTimer.setInterval(5000);
+  refreshInternetTimer.setInterval(internetUpdatet);
+  refreshInternetTimer.setCallback(checkInternet);
+  // baseTimer.setInterval(5000,1);
+  // baseTimer.setCallback(afterBoot);
+
+  TimerManager::instance().start();
+  //delay(2000);
+  //hourlyTask();
+  //updateWeather();
+  checkInternet();
 }//setup
 
 //////////////////////////////////////////////////////
@@ -1687,152 +2058,103 @@ void setup(){
 void loop(){
   //TODO : Figure out why refresh token after mdns fails if there is no(substantial) delay
 
+  if(prevOnBattery != onBattery){
+    prevOnBattery = onBattery;
+    if(onBattery){
+      refreshTimeTimer.setInterval(timeUpdatet*3);
+      refreshSensorTimer.setInterval(sensorsUpdatet*3);
+      refreshDisplayTimer.setInterval(displayUpdatet*2);
+      if(currDisplayFace != OTA_FACE)
+        spotifyTimer.setInterval(spotifyLongt*3);
+      rdsTimer.setInterval(rdst*3);
+      weatherTimer.setInterval(weathert*3);
+      refreshInternetTimer.setInterval(internetUpdatet*3);
+    }
+    else{
+      refreshTimeTimer.setInterval(timeUpdatet);
+      refreshSensorTimer.setInterval(sensorsUpdatet);
+      refreshDisplayTimer.setInterval(displayUpdatet);
+      if(currDisplayFace != OTA_FACE)
+        spotifyTimer.setInterval(spotifyLongt);
+      rdsTimer.setInterval(rdst); 
+      weatherTimer.setInterval(weathert);
+      refreshInternetTimer.setInterval(internetUpdatet);
+    }
+  }
+
   MDNS.update();
   if(currDisplayFace != OTA_FACE){
-    if(refreshTime){
-      refreshTimeFromRTC();
-      refreshTime = false;
-    }
+    // if(refreshTime){
+    //   refreshTimeFromRTC();
+    //   refreshTime = false;
+    // }
 
-    if(refreshSensors){
-      refreshBMP();
-      refreshAHT();
-      refreshSensors = false;
-    }
+    // if(refreshSensors){
+    //   refreshSensors = false;
+    // }
     
-    if(refreshDisplay){
-      switch (currDisplayFace)
-      {
-      case DEFAULT_FACE:
-        if(currDisplayFace != prevDisplayFace){
-          prevDisplayFace = currDisplayFace;
-          tft.fillScreen(TFT_BLACK);
-          prefs.putChar("lastFace", currDisplayFace);
-        }
-        displayDefault();
-        break;
-      
-      case WEATHER_SUMMARY_FACE:
-        if(currDisplayFace != prevDisplayFace){
-          prevDisplayFace = currDisplayFace;
-          tft.fillScreen(TFT_BLACK);
-          prefs.putChar("lastFace", currDisplayFace);
-        }
-        displayWeather();
-        break;
-
-      case SPOTIFY_FACE:
-        if(currDisplayFace != prevDisplayFace){
-          prevDisplayFace = currDisplayFace;
-          tft.fillScreen(0x09C3);
-          spotifyConnection.stateChanged = true;
-          prefs.putChar("lastFace", currDisplayFace);
-          //tft.fillScreen(TFT_BLACK);
-        }
-        displaySpotify();
-        break;
-      
-      case OTA_FACE:
-        break;
-      }
-      refreshDisplay = false;
-      //Serial.println(ESP.getFreeHeap(), DEC);
-    }
+    // if(refreshDisplay){  
+    // }
     
     if( !isTimeSetFromNTP && WiFi.status() == WL_CONNECTED) { // TODO: find way to reduce checking rate if rtc is already set
-      if(checkInternet()){
+      if(internetAvailable){
         Serial.println(F("Connected to WiFi, updating time from NTP"));
         setRTCfromNTP();
         isTimeSetFromNTP = true;
+        refreshInternetTimer.setInterval(internetUpdatet);
       }
-      sec10over = false;//TODO : find a better/efficient solution
+      else if(refreshInternetTimer.getElapsedTime()>2000){
+        refreshInternetTimer.setInterval(1500);
+      }
     }
     
-    if(sec5over){
-      //unsigned long time = millis();
-      if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
-        spotifyConnection.getTrackInfo();
-      }
-      //Serial.println(millis()-time);
-      sec5over = false;
-    }
+    // if(sec5over){
+    //   //unsigned long time = millis();
+    //   if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
+    //     spotifyConnection.getTrackInfo();
+    //   }
+    //   //Serial.println(millis()-time);
+    //   sec5over = false;
+    // }
     
-    if(sec10over){
-      if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
-        spotifyConnection.getTrackInfo();
-      }
-      sec10over = false;
-    }
+    // if(sec10over){
+    //   if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
+    //     spotifyConnection.getTrackInfo();
+    //   }
+    //   sec10over = false;
+    // }
     
-    if(min1over){
-      if(checkInternet())
-        internetAvailable = sendDataToRDS(tempBMP,pressureBMP,tempAHT,humidityAHT);
-      min1over=false;
-    }
+    // if(min1over){  
+    //   min1over=false;
+    // }
 
-    if(min5over){
-      //getApiWeather();
-      //unsigned long time = millis();
-      if(checkInternet()){
-        internetAvailable = getApiWeatherCurrent();
-        if(internetAvailable)
-          min5over=false;
-      }
-      //Serial.print("\nFinished in ");
-      //Serial.println(millis()-time);
-    }
+    // if(min5over){
+    //   //getApiWeather();
+    //   //unsigned long time = millis();
+    //   }
+    //   //Serial.print("\nFinished in ");
+    //   //Serial.println(millis()-time);
+    // }
 
     //need to handle multiple time consuming tasks at hour end, so using hourTaskCount to do them one at a time
-    if(prevHour != now.hour() && checkInternet()){
-
-      //TODO : the tasks are done in non blocking success/failure, deal with it somehow
-      bool success = false;
-      switch(hourTaskCount){
-        case 0 :
-          success = getApiWeather3HrForecast();
-          break;
-        case 1 :
-          success = getApiWeatherDailyForecast();
-          break;
-        case 2 :
-          if(spotifyConnection.accessTokenSet)
-            success = spotifyConnection.refreshAuth();
-          break;
-      }
-      
-      if(success){
-        Serial.print("Success at hour task : ");
-        Serial.println(hourTaskCount);
-      }
-      else{
-        Serial.print("Failure at hour task : ");
-        Serial.println(hourTaskCount);
-      }
-
-      hourTaskCount++;
-      if(hourTaskCount>2){
-        hourTaskCount = 0;
-        prevHour = now.hour();
-      }
-    }
+    // if(prevHour != now.hour() && checkInternet()){
+    // }
     if(spotifyConnection.accessTokenSet){
       if(serverOn)
         serverOn = false;
     }
     else
       server.handleClient();
+    
+    TimerManager::instance().update();
   }
   else{
-    if(currDisplayFace != prevDisplayFace){
-        prevDisplayFace = currDisplayFace;
-        tft.fillScreen(TFT_BLACK);
-        displayOTA();
-      }
+    refreshDisplayTimer.update();
     ArduinoOTA.handle();
   }
 
-  delay(20);
-  baseTimer.update();
+  delay(100);
+  // baseTimer.update();
   button.tick();
   //Serial.println(ticks);
 
