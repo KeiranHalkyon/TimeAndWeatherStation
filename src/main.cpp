@@ -1569,7 +1569,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
       tft.fillRect(0, 93, 127, 26, bg);  // description frame
       // char tempStore[50];
       sprintf(tempStore,"In %dhrs : %s - %.1f'C", displayDefaultState*3, forecastHourDescAPI[displayDefaultState-1], forecastHourTempAPI[displayDefaultState-1]);
-      printSplitString2(tempStore, 20, 3, 94);
+      printSplitString2(tempStore, 22, 3, 94);
 
       if(displayDefaultState == 1){
         tft.fillRect(1, 120, 127, 42, bg);  // Rain frame
