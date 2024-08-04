@@ -1,3 +1,4 @@
 .pio
 .vscode
 src/user_constants.hpp
+*__pycache__*

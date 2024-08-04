@@ -1,7 +1,7 @@
 /*
   TODO : 1) Setup state diagram/machine
          2) Determine how the display will be updated - DONE
-            a) decide if display behavoiur will change on power status - REQUIRED
+            a) decide if display behavoiur will change on power status - DONE
          3) Setup the following required modules - 
             a) Time updater (RTC ds1307) - DONE
                 i) Setup time on - (first boot, connection to network, repeated interval when connected to network) - DONE
@@ -10,25 +10,25 @@
                 i) Altitude meter? - Done
             c) Temp and humidity updater (aht20) - DONE
             d) Setup button for input - DONE
-                i) Set state via interrupt method into a variable - MORE SETUP REQUIRED
+                i) Set state via interrupt method into a variable - DONE
             e) Setup method to retrieve weather from OpenWeatherMap - DONE
                 i) Decide if both current and forecast is required? - DONE
             f) Find some way to log local temp, humidity and pressure - NOT REQUIRED
                 i) store it in flash or external eprom?
             g) Determine whether to offload data to some external site - DONE
                 i) if doing this.. decide where - DONE
-                ii) decide frequency of update - YET TO DO
-            h) manage wifi - YET TO DO
+                ii) decide frequency of update - DONE
+            h) manage wifi - DONE(Keeping singular AP for now)
                 i) add multiple AP if possible
                 ii) change state according to wifi connection
                 iii) use wifi library in future...
-            i) determine whether running on battery(3.3v) or main(5v) - YET TO DO
+            i) determine whether running on battery(3.3v) or main(5v) - DONE
                 i) update states as necessary
                 ii) Show battery status if possible
             j) Spotify Player info (overkill) - DONE
                 i) Determine polling rate - YET TO DETERMINE
-            h) Make the summary and default face more user friendly - YET TO DO
-            i) Make header file - YET TO DO
+            h) Make the summary and default face more user friendly - DONE
+            i) Make header file - ALMOST DONE
 */
 /////////////////////////////////////////////////////
 //
@@ -74,6 +74,7 @@
 #include "Web_Fetch.h"
 #include "index.h"
 #include "iconsA.h"
+#include "main.h"
 //////////////////////////////////////////////////////
 //
 //              GLOBAL VARIABLES
@@ -113,7 +114,8 @@ const uint32_t displayUpdatet = 5*1000, //was 2000
          internetUpdatet =   2*60*1000;
 
 Timer baseTimer, refreshTimeTimer, refreshSensorTimer, hourlyTimer,
-      refreshDisplayTimer, spotifyTimer, rdsTimer, weatherTimer, refreshInternetTimer;
+      refreshDisplayTimer, spotifyTimer, rdsTimer, weatherTimer, refreshInternetTimer,
+      pcInfoTimer;
 
 uint8_t currDisplayFace = 1,
         prevDisplayFace = -1,
@@ -145,6 +147,8 @@ float humidityAHT, tempAHT,
 
 uint16_t sensorReadingCount = 0;
 
+int8_t displayDefaultState = 0; 
+
 //api results
 float currentTempAPI=0.0f, currentPressAPI=0.0f, currentFeelsLikeAPI=0.0f, currentHumidityAPI=0.0f, currentMaxTempAPI = 0.0f, currentMinTempAPI = 0.0f,
   forecastHourTempAPI[FORECAST_RANGE], forecastHourPressAPI[FORECAST_RANGE], forecastHourHumidityAPI[FORECAST_RANGE], forecastHourRainAPI[FORECAST_RANGE], forecastHourPopAPI[FORECAST_RANGE],
@@ -166,6 +170,12 @@ bool serverOn = true;
 
 const char daysOfTheWeekFull[7][10] = {"Sunday   ", "Monday   ", "Tuesday  ", "Wednesday", "Thursday ", "Friday   ", "Saturday "};
 const char daysOfTheWeekShort[7][4] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+
+//PC info variables
+float pcCpuTemp = 0.0f, pcGpuTemp = 0.0f, pcBattery = 0.0f, pcMemory = 0.0f, pcCpuLoad = 0.0f, 
+  pcGpuLoad = 0.0f, pcFPS = 0.0f, pcFrameTime = 0.0f, pcDownloadRate = 0.0f, pcUploadRate = 0.0f;
+bool pcThrottle = false, pcInfoUpdated = false;
+//unsigned long lastPcUpdate = 0l;
 
 //////////////////////////////////////////////////////
 //
@@ -243,7 +253,7 @@ void setRTCfromNTP(){ //set time to rtc from ntp, using unix timestamp, begins t
 }
 
 //timeout of 0(zero) means wait forever, waitForTimeout being false means donot wait, just begin connection and proceed
-bool connectToWifi(bool waitForTimeout = true, unsigned long timeout = 500L){
+bool connectToWifi(bool waitForTimeout, unsigned long timeout){
 
   WiFi.begin(String(ssid), String(password));
   unsigned long lastTry = millis();
@@ -267,37 +277,7 @@ void refreshBMP(){
   altitudeBMP = bmp.readAltitude(1013.25);//TODO : make it constant
 }
 
-/*
-void printTime(){
-  //char timeStr[6] = "00:00";
-  char hour[3] = "00", min[3] = "00",
-    colon = (now.second() & 1)? ':' : ' ' ;
-  hour[0] = '0' + now.hour() / 10;
-  hour[1] = '0' + now.hour() % 10;
-  min[0] = '0' + now.minute() / 10;
-  min[1] = '0' + now.minute() % 10;
-  tft.print(hour);
-  tft.print(colon);
-  tft.setCursor(70,0);
-  tft.print(min);
-}
-
-void printDate(){
-  char dateStr[9] = "00/00/00";
-  dateStr[0] = '0' + now.day() / 10;
-  dateStr[1] = '0' + now.day() % 10;
-  dateStr[3] = '0' + now.month() / 10;
-  dateStr[4] = '0' + now.month() % 10;
-  dateStr[6] = '0' + (now.year() % 100) / 10;
-  dateStr[7] = '0' + now.year() % 10;
-  tft.print(dateStr);
-}
-
-void printDay(){
-  tft.print(daysOfTheWeekFull[now.dayOfTheWeek()]);
-}
-*/
-void printTemp(bool sensor = false){
+void printTemp(bool sensor){
   //sensor = false means bmp, true means AHT
   char tempStr[6];
   if(!sensor)
@@ -308,19 +288,6 @@ void printTemp(bool sensor = false){
   tft.print(tempStr);
 }
 
-void printPressure(){
-  char pressureStr[8];
-  dtostrf(pressureBMP, 4, 0, pressureStr);
-  tft.print(pressureStr);
-}
-
-void printHumidity(){
-  char humidityStr[6];
-  dtostrf(humidityAHT, 3, 1, humidityStr);
-  tft.print(humidityStr);
-}
-
-void refreshDisplay();
 // this function will be called when the button was pressed 1 time only.
 void singleClick() {
   currDisplayFace = (currDisplayFace+1)%NO_OF_FACES;
@@ -331,8 +298,20 @@ void singleClick() {
 
 // this function will be called when the button was pressed 2 times in a short timeframe.
 void doubleClick() {
-  inputStartTime = millis();
-  Serial.println("doubleClick() detected.");
+  if(currDisplayFace == DEFAULT_FACE){
+    //if internet is available
+    if(displayDefaultState >=0){
+      displayDefaultState = -3;
+      pcInfoTimer.setInterval(10*1000);
+      pcInfoUpdated = true; //so that the screen is updated immediately
+    }
+    //if PC info is already shown, revert back to default
+    else if(displayDefaultState == -3){
+      pcInfoTimer.stop();
+      displayDefaultState = 0;
+    }
+    refreshDisplay();
+  }
 } // doubleClick
 
 // this function will be called when the button was pressed multiple times in a short timeframe.
@@ -360,12 +339,9 @@ void longPressStart() {
 
 // long press button to force refresh RTC from NTP
 void longPressStop() {
-  // inputStartTime = millis();
-  // Serial.print("pressStop(");
-  // Serial.print(millis() - pressStartTime);
   Serial.println("Resetting time from NTP");
   setRTCfromNTP();
-} // pressStop()
+}
 
 void duringLongPress(){
   Serial.println("Long Press ongoing");
@@ -613,6 +589,7 @@ public:
           Serial.println(accessToken);
           Serial.println(refreshToken);
           prefs.putString("refreshToken", refreshToken);
+          doc.clear();
       }else{
           Serial.println(https.getString());
       }
@@ -650,6 +627,7 @@ public:
           // Serial.println(accessToken);
           // Serial.println(refreshToken);
           prefs.putString("refreshToken", refreshToken);
+          doc.clear();
       }else{
           Serial.println("Refresh Failed");
           Serial.println(https.getString());
@@ -774,256 +752,7 @@ public:
       
       return success;
   }
-  /*
-  bool toggleLiked(String songId){
-      String url = "https://api.spotify.com/v1/me/tracks/contains?ids="+songId;
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      https.addHeader("Content-Type","application/json");
-      int httpResponseCode = https.GET();
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 200) {
-          String response = https.getString();
-          https.end();
-          if(response == "[ true ]"){
-              currentSong.isLiked = false;
-              dislikeSong(songId);
-          }else{
-              currentSong.isLiked = true;
-              likeSong(songId);
-          }
-          drawScreen(false,true);
-          Serial.println(response);
-          success = true;
-      } else {
-          Serial.print("Error toggling liked songs: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-          https.end();
-      }
-
-      
-      // Disconnect from the Spotify API
-      
-      return success;
-  }
   
-  bool drawScreen(){
-      // int rectWidth = 120;
-      // int rectHeight = 10;
-      //uint16_t color = 0xFD80, bg = 0x1AC6; //fg = 0xfd80(yellow red)
-      //uint16_t color = 0xFD80, bg = 0x0284; //fg = 0xfd80(yellow red)
-      uint16_t color = 0xFD80, bg = 0x09C3; //fg = 0xfd80(yellow red)
-      tft.fillScreen(bg);
-      if (LittleFS.exists("/albumArt.jpg") == true) { 
-          TJpgDec.setSwapBytes(true);
-          uint16_t xpos = 53, ypos = 0;
-          
-          TJpgDec.setJpgScale(4);
-          TJpgDec.drawFsJpg(xpos, ypos, "/albumArt.jpg", LittleFS); // scale 4 upper right
-          //TJpgDec.setJpgScale(2);
-          //TJpgDec.drawFsJpg(89, 2, "/albumArt.jpg", LittleFS); // scale 2 upper right
-          //TJpgDec.drawFsJpg(-11 , 0, "/albumArt.jpg", LittleFS); // scale 2 full screen
-
-          tft.drawRect(xpos, ypos, 75, 75, bg);
-          tft.drawRect(xpos+1, ypos+1, 73, 73, bg);
-          tft.drawRect(xpos+2, ypos+2, 71, 71, bg);
-          tft.drawRect(xpos+3, ypos+3, 69, 69, 0x8C8B); //6691
-          // tft.drawSmoothRoundRect(xpos, ypos, 0, 4, 74, 74, TFT_BLACK, TFT_BLACK); //inner 
-          // tft.drawSmoothRoundRect(xpos + 2, ypos, 9, 4, 69, 71, TFT_BLACK, TFT_BLACK); //outer
-
-          tft.loadFont("manrope-regular36", LittleFS);
-          tft.setTextColor(color, bg);
-          tft.setCursor(4, 4);
-          tft.println("00");
-          tft.setCursor(4, tft.getCursorY());
-          tft.println("00");
-          tft.unloadFont();
-      }else{
-          TJpgDec.setSwapBytes(false);
-          TJpgDec.setJpgScale(1);
-          TJpgDec.drawFsJpg(0, 0, "/Angry.jpg", LittleFS);
-      }
-      tft.setTextDatum(BL_DATUM);
-      tft.setTextWrap(true);
-      tft.setCursor(0,85);
-      tft.setTextColor(color, bg);
-
-      tft.loadFont("leelawad12", LittleFS);
-      //tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      printSplitString(currentSong.artist,19,95); //15 was 20
-      // tft.drawString(currentSong.artist, tft.width() / 2, 10);
-      tft.setCursor(0, tft.getCursorY() + 5);
-      printSplitString(currentSong.song,19,130);  //15 was 20
-      tft.unloadFont();
-      // tft.print(currentSong.song);
-      // tft.drawString(currentSong.song, tft.width() / 2, 115);
-      // tft.drawString(currentSong.song, tft.width() / 2, 125);
-      return true;
-  }
-  
-  bool togglePlay(){
-      String url = "https://api.spotify.com/v1/me/player/" + String(isPlaying ? "pause" : "play");
-      isPlaying = !isPlaying;
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      int httpResponseCode = https.PUT("");
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 204) {
-          // String response = https.getString();
-          Serial.println((isPlaying ? "Playing" : "Pausing"));
-          success = true;
-      } else {
-          Serial.print("Error pausing or playing: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      }
-
-      
-      // Disconnect from the Spotify API
-      https.end();
-      getTrackInfo();
-      return success;
-  }
-  bool adjustVolume(int vol){
-      String url = "https://api.spotify.com/v1/me/player/volume?volume_percent=" + String(vol);
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      int httpResponseCode = https.PUT("");
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 204) {
-          // String response = https.getString();
-          currVol = vol;
-          success = true;
-      }else if(httpResponseCode == 403){
-            currVol = vol;
-          success = false;
-          Serial.print("Error setting volume: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      } else {
-          Serial.print("Error setting volume: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      }
-
-      
-      // Disconnect from the Spotify API
-      https.end();
-      return success;
-  }
-  bool skipForward(){
-      String url = "https://api.spotify.com/v1/me/player/next";
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      int httpResponseCode = https.POST("");
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 204) {
-          // String response = https.getString();
-          Serial.println("skipping forward");
-          success = true;
-      } else {
-          Serial.print("Error skipping forward: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      }
-
-      
-      // Disconnect from the Spotify API
-      https.end();
-      getTrackInfo();
-      return success;
-  }
-  bool skipBack(){
-      String url = "https://api.spotify.com/v1/me/player/previous";
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      int httpResponseCode = https.POST("");
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 204) {
-          // String response = https.getString();
-          Serial.println("skipping backward");
-          success = true;
-      } else {
-          Serial.print("Error skipping backward: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      }
-
-      
-      // Disconnect from the Spotify API
-      https.end();
-      getTrackInfo();
-      return success;
-  }
-  bool likeSong(String songId){
-      String url = "https://api.spotify.com/v1/me/tracks?ids="+songId;
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      https.addHeader("Content-Type","application/json");
-      char requestBody[] = "{\"ids\":[\"string\"]}";
-      int httpResponseCode = https.PUT(requestBody);
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 200) {
-          // String response = https.getString();
-          Serial.println("added track to liked songs");
-          success = true;
-      } else {
-          Serial.print("Error adding to liked songs: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      }
-      
-      // Disconnect from the Spotify API
-      https.end();
-      return success;
-  }
-  bool dislikeSong(String songId){
-      String url = "https://api.spotify.com/v1/me/tracks?ids="+songId;
-      https.begin(*client,url);
-      String auth = "Bearer " + String(accessToken);
-      https.addHeader("Authorization",auth);
-      // https.addHeader("Content-Type","application/json");
-      // char requestBody[] = "{\"ids\":[\"string\"]}";
-      int httpResponseCode = https.DELETE();
-      bool success = false;
-      // Check if the request was successful
-      if (httpResponseCode == 200) {
-          // String response = https.getString();
-          Serial.println("removed liked songs");
-          success = true;
-      } else {
-          Serial.print("Error removing from liked songs: ");
-          Serial.println(httpResponseCode);
-          String response = https.getString();
-          Serial.println(response);
-      }
-
-      
-      // Disconnect from the Spotify API
-      https.end();
-      return success;
-  }
-  */
   bool setRefreshToken(String token){
     refreshToken = token;
     return refreshAuth();
@@ -1107,47 +836,6 @@ bool sendDataToRDS(float tbmp, float pbmp,float taht, float haht){
   https.end();
   return (responseCode == 200);
 }
-/*
-bool getApiWeather(){
-  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
-  client->setInsecure();
-  HTTPClient https;
-  int httpCode = -1;
-
-  String completeRequest = openWeatherUrl + "2.5/weather?appid=" + openWeatherApiKey + "&lat=22.5064&lon=88.2999&units=metric";
-
-  //Initializing an HTTPS communication using the secure client
-  //Serial.print("[HTTPS] begin...\n");
-  if (https.begin(*client, completeRequest.c_str())) {  // HTTPS
-    //Serial.print("[HTTPS] GET...\n");
-    // start connection and send HTTP header
-    httpCode = https.GET();
-    // httpCode will be negative on error
-    if (httpCode > 0) {
-      // HTTP header has been send and Server response header has been handled
-      //Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
-      if (httpCode == HTTP_CODE_OK) {
-
-        JsonDocument doc;
-        deserializeJson(doc, https.getStream());
-        
-        strcpy(currentDescAPI, doc["weather"][0]["description"]);
-        currentTempAPI = doc["main"]["temp"];
-        currentFeelsLikeAPI = doc["main"]["feels_like"];
-        currentPressAPI = doc["main"]["pressure"];
-        currentHumidityAPI = doc["main"]["humidity"];
-      }
-    } else {
-      Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
-    }
-
-    https.end();
-  } else {
-    Serial.printf("[HTTPS] Unable to connect\n");
-  }
-  return (httpCode == 200);
-}
-*/
 
 bool getApiWeatherCurrent(){
   std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
@@ -1179,6 +867,7 @@ bool getApiWeatherCurrent(){
         currentFeelsLikeAPI = doc["main"]["feels_like"];
         currentPressAPI = doc["main"]["pressure"];
         currentHumidityAPI = doc["main"]["humidity"];
+        doc.clear();
       }
     } else {
       Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
@@ -1216,6 +905,7 @@ bool getApiWeather3HrForecast(){
           forecastHourRainAPI[i] = doc["list"][i]["rain"]["3h"] | 0.0f;
           forecastHourTempAPI[i] = doc["list"][i]["main"]["temp"];
         }
+        doc.clear();
       }
     } else {
       Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
@@ -1256,15 +946,7 @@ bool getApiWeatherDailyForecast(){
         tomorrowRainAPI = doc["daily"][1]["rain"] | 0.0f;
         tomorrowPopAPI = doc["daily"][1]["pop"];
 
-        // for(int i=0 ; i<FORECAST_RANGE;i++){
-        //   strcpy(forecastHourDescAPI[i], doc["list"][i]["weather"][0]["description"]);
-        //   strcpy(forecastHourIconAPI[i], doc["list"][i]["weather"][0]["icon"]);
-        //   forecastHourHumidityAPI[i] = doc["list"][i]["main"]["humidity"];
-        //   forecastHourPopAPI[i] = doc["list"][i]["pop"];
-        //   forecastHourPressAPI[i] = doc["list"][i]["main"]["pressure"];
-        //   forecastHourRainAPI[i] = doc["list"][i]["rain"]["3h"] | 0.0f;
-        //   forecastHourTempAPI[i] = doc["list"][i]["main"]["temp"];
-        // }
+        doc.clear();
       }
     } else {
       Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
@@ -1278,114 +960,45 @@ bool getApiWeatherDailyForecast(){
   return (httpCode == 200);
 }
 
-/*
-bool getApiv3() {
-  std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
-  client->setInsecure();
-  HTTPClient https;
+void getPcInfo(){
+  if(!internetAvailable)
+    return;
+  
+  WiFiClient client;
+  HTTPClient http;
   int httpCode = -1;
 
-  //String completeRequest = openWeatherUrl + "3.0/onecall?appid=" + openWeatherApiKey + "&lat=22.5064&lon=88.2999&units=metric&exclude=minutely";
-  //Serial.println(ESP.getFreeHeap(),DEC);
-  char completeRequest [145];
-  sprintf(completeRequest, openWeatherUrl, openWeatherApiKey, F("22.5064"), F("88.2999"));
-  //if (https.begin(*client, completeRequest.c_str())) {  
-  if (https.begin(*client, completeRequest)) {  
-    Serial.print("[HTTPS] GET...\n");
-    httpCode = https.GET();
-    // httpCode will be negative on error
+  if (http.begin(client, pcServer)) {  // HTTPS
+    httpCode = http.GET();
     if (httpCode > 0) {
-      Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
       if (httpCode == HTTP_CODE_OK) {
-        //filters
-        JsonDocument doc, filter;
-        JsonObject filter_current = filter["current"].to<JsonObject>();
-        filter_current["temp"] = true;
-        filter_current["feels_like"] = true;
-        filter_current["pressure"] = true;
-        filter_current["humidity"] = true;
-        filter_current["weather"][0]["description"] = true;
+        JsonDocument doc;
+        deserializeJson(doc, http.getStream());
 
-        JsonObject filter_hourly_0 = filter["hourly"].add<JsonObject>();
-        filter_hourly_0["temp"] = true;
-        //filter_hourly_0["feels_like"] = true;
-        filter_hourly_0["pressure"] = true;
-        filter_hourly_0["humidity"] = true;
-        filter_hourly_0["pop"] = true;
-        filter_hourly_0["rain"]["1h"] = true;
-        filter_hourly_0["weather"][0]["description"] = true;
+        pcCpuTemp = doc["cpuTemp"];
+        pcCpuLoad = doc["cpuLoad"];
+        pcThrottle = (doc["cpuThrottle"] == 1)? true : false;
+        pcDownloadRate = doc["downloadRate"];
+        pcUploadRate = doc["uploadRate"];
+        pcGpuLoad = doc["gpuLoad"];
+        pcGpuTemp = doc["gpuTemp"];
+        pcMemory = doc["memory"];
+        pcFPS = doc["framerate"];
+        pcFrameTime = doc["frametime"];
 
-        JsonObject filter_daily_0 = filter["daily"].add<JsonObject>();
-        filter_daily_0["summary"] = true;
-
-        JsonObject filter_daily_0_temp = filter_daily_0["temp"].to<JsonObject>();
-        filter_daily_0_temp["min"] = true;
-        filter_daily_0_temp["max"] = true;
-        filter_daily_0["feels_like"]["day"] = true;
-        filter_daily_0["humidity"] = true;
-        //filter_daily_0["weather"][0]["description"] = true;
-        filter_daily_0["rain"] = true;
-        
-        //Serial.println(ESP.getFreeHeap(),DEC);
-        DeserializationError error = deserializeJson(doc, https.getStream(), DeserializationOption::Filter(filter));
-        if (error) {
-          Serial.print("deserializeJson() failed: ");
-          Serial.println(error.c_str());
-          return false;
-        }
-        //deserializeJson(doc, https.getString());
-        
-        // const char *current_desc = doc["current"]["weather"][0]["description"],
-        //   *hourly_0_desc = doc["hourly"][0]["weather"][0]["description"],
-        //   *hourly_1_desc = doc["hourly"][1]["weather"][0]["description"],
-        //   *hourly_2_desc = doc["hourly"][2]["weather"][0]["description"],
-        //   *daily_0_desc = doc["daily"][0]["weather"][0]["description"],
-        //   *daily_1_desc = doc["daily"][1]["weather"][0]["description"];
-
-        // Serial.printf("Current Weather Description : %s\n",current_desc);
-        // Serial.printf("Hour 0 Weather Description : %s\n",hourly_0_desc);
-        // Serial.printf("Hour 1 Weather Description : %s\n",hourly_1_desc);
-        // Serial.printf("Daily 0 Weather Description : %s\n",daily_0_desc);
-        // Serial.printf("Daily 1 Weather Description : %s\n",daily_1_desc);
-
-        currentTempAPI = doc["current"]["temp"];
-        currentFeelsLikeAPI = doc["current"]["feels_like"];
-        currentPressAPI = doc["current"]["pressure"];
-        currentHumidityAPI = doc["current"]["humidity"];
-        strcpy(currentDescAPI,doc["current"]["weather"][0]["description"]);
-
-        for(int i = 0 ; i < FORECAST_RANGE ; i++){
-          forecastHourTempAPI[i] = doc["hourly"][i+1]["temp"];
-          forecastHourPressAPI[i] = doc["hourly"][i+1]["pressure"];
-          forecastHourHumidityAPI[i] = doc["hourly"][i+1]["humidity"];
-          forecastHourPopAPI[i] = doc["hourly"][i+1]["pop"];
-          forecastHourRainAPI[i] = doc["hourly"][i+1]["rain"]["1h"] | -1.0f ;
-          strcpy(forecastHourDescAPI[i], doc["hourly"][i+1]["weather"][0]["description"]);
-        }
-
-        currentMaxTempAPI = doc["daily"][0]["temp"]["max"];
-        currentMinTempAPI = doc["daily"][0]["temp"]["min"];
-        strcpy(currentSummaryAPI, doc["daily"][0]["summary"]);
-
-        tomorrowMaxTempAPI = doc["daily"][1]["temp"]["max"];
-        tomorrowMinTempAPI = doc["daily"][1]["temp"]["min"];
-        tomorrowFeelsLikeAPI = doc["daily"][1]["feels_like"]["day"];
-        tomorrowHumidityAPI = doc["daily"][1]["humidity"];
-        tomorrowRainAPI = doc["daily"][1]["rain"] | 0.0f;
-        strcpy(tomorrowSummaryAPI, doc["daily"][1]["summary"]);
+        pcInfoUpdated = true;
+        doc.clear();
       }
     } else {
-      Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+      Serial.printf("[HTTPS] GET... failed PCINFO, error: %s\n", http.errorToString(httpCode).c_str());
     }
-
-    https.end();
   } else {
     Serial.printf("[HTTPS] Unable to connect\n");
   }
-  
-  return (httpCode == 200);
+  http.end();
+  // return (httpCode == 200);
 }
-*/
+
 unsigned long myAbs(long val){
   return (val>0)? val : -val;
 }
@@ -1414,10 +1027,9 @@ void drawPixelFrame(uint16_t gap){
     }
 }
 
-int8_t displayDefaultState = 0; 
 char tempStore[60];
 //default face, includes a bit of everything
-void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
+void displayDefault(uint16_t color, uint16_t bg, bool refresh){
   //uint16_t color = 0xFD80, bg = TFT_BLACK;
   tft.setTextColor(color, bg);
 
@@ -1472,9 +1084,10 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     prevMinute = now.minute();
   }
 
+  tft.loadFont("manrope-semibold12", LittleFS);
   //Local Info
   if(sensorUpdated || refresh){
-    tft.loadFont("manrope-semibold12", LittleFS);
+    //tft.loadFont("manrope-semibold12", LittleFS);
     tft.fillRect(67,54,53,36,bg);
     tft.setCursor(68,55);
     tft.printf("%.1f 'C ", tempAHT);
@@ -1493,28 +1106,13 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
   }
 
   if(internetAvailable){
-    if(displayDefaultState < 0)
-      displayDefaultState = 0;
-
     if(weatherUpdated || refresh){
-      // weather icon
-      // switch(icon){
-      //   case 1 : tft.pushImage(98,23,25,25,i01d); break;
-      //   case 2 : tft.pushImage(98,23,25,25,i02d); break;
-      //   case 3 : tft.pushImage(98,23,25,25,i03d); break;
-      //   case 4 : tft.pushImage(98,23,25,25,i04d); break;
-      //   case 9 : tft.pushImage(98,23,25,25,i09d); break;
-      //   case 10 : tft.pushImage(98,23,25,25,i10d); break;
-      //   case 11 : tft.pushImage(98,23,25,25,i11d); break;
-      //   case 13 : tft.pushImage(98,23,25,25,i13d); break;
-      //   case 50 : tft.pushImage(98,23,25,25,i50d); break;
-      // }
       tft.setSwapBytes(true);
       tft.pushImage(98, 23, 25, 25, getIcon(currentIconAPI));
       tft.setSwapBytes(false);
 
       //Online info
-      tft.loadFont("manrope-semibold12", LittleFS);
+      //tft.loadFont("manrope-semibold12", LittleFS);
       tft.fillRect(2,54,54,36,bg);
       tft.setCursor(3,55);
       tft.printf("%.1f 'C ", currentTempAPI);
@@ -1527,10 +1125,12 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
       weatherUpdated = false;
     }
 
+    // if(displayDefaultState < 0)
+    //   displayDefaultState = 0;
     //show notif on song change
     if(spotifyConnection.stateChanged && spotifyConnection.isAvailable){
       tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
-      tft.loadFont("manrope-semibold12", LittleFS);
+      //tft.loadFont("manrope-semibold12", LittleFS);
       // char temp[50];
       // sprintf(temp,"%s",spotifyConnection.currentSong.artist);
       printSplitString(spotifyConnection.currentSong.artist, 15, 3, 109);
@@ -1540,11 +1140,41 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
       tft.setSwapBytes(false);
 
       spotifyConnection.stateChanged = false;
-      displayDefaultState = -1;
+      // displayDefaultState = -1;
+      if(displayDefaultState == -3)
+        pcInfoUpdated = true;
+      else
+        displayDefaultState = 0; //reset weather screen to 0 after spotify update
+      return;
     }
+
+    //show PC info
+    if(displayDefaultState == -3){
+      if(pcInfoUpdated){
+        tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
+        tft.setCursor(3,95);
+        tft.printf("CPU: %.1f%% / %.0f'C\n", pcCpuLoad, pcCpuTemp);
+        tft.setCursor(3,108);
+        tft.printf("GPU: %.1f%% / %.0f'C\n", pcGpuLoad, pcGpuTemp);
+        tft.setCursor(3,121);
+        tft.printf("MEM: %.1f%%\n", pcMemory);
+        tft.setCursor(3,134);
+        tft.printf("FPS/FTM: %.0f / %.1f\n", pcFPS, pcFrameTime);
+        tft.setCursor(3,147);
+        tft.printf("DL/UP: %.1f / %.1f", pcDownloadRate, pcUploadRate);
+
+        if(pcThrottle)
+          tft.fillRect(120, 98, 5, 5, TFT_RED);
+        else
+          tft.fillRect(120, 98, 5, 5, TFT_GREEN);
+        pcInfoUpdated = false;
+      }
+      return;
+    }
+
     //today or tomorrow weather description
     else if(displayDefaultState == 0){
-      tft.loadFont("manrope-semibold12", LittleFS);
+      //tft.loadFont("manrope-semibold12", LittleFS);
       tft.setTextColor(color, bg);
       tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
       if(now.hour() >= 20){
@@ -1565,7 +1195,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     }
     // 3hr forecasts
     else if(displayDefaultState >= 1){
-      tft.loadFont("manrope-semibold12", LittleFS);
+      //tft.loadFont("manrope-semibold12", LittleFS);
       tft.fillRect(0, 93, 127, 26, bg);  // description frame
       // char tempStore[50];
       sprintf(tempStore,"In %dhrs : %s - %.1f'C", displayDefaultState*3, forecastHourDescAPI[displayDefaultState-1], forecastHourTempAPI[displayDefaultState-1]);
@@ -1602,9 +1232,10 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     if(displayDefaultState>FORECAST_RANGE)
       displayDefaultState = 0;
   }
+  // No connnection screen
   else if(displayDefaultState >= 0){
-    displayDefaultState = -2;
-    tft.loadFont("manrope-semibold12", LittleFS);
+    displayDefaultState = -2; // mark that no connection screen is already there
+    //tft.loadFont("manrope-semibold12", LittleFS);
     tft.setTextColor(color, bg);
     tft.setSwapBytes(true);
     tft.pushImage(98,23,25,25,exclamation);
@@ -1614,6 +1245,7 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh = false){
     tft.print("No Connection !");
     //Serial.print("Here");
   }
+  tft.unloadFont();
 }
 
 //spotify face, but only the time is updated regularly
@@ -1623,7 +1255,8 @@ void displaySpotify(){
   if(spotifyConnection.stateChanged){
     tft.fillScreen(bg);
     tft.setTextColor(color, bg, true);
-    tft.loadFont("leelawad12", LittleFS);
+    //tft.loadFont("leelawad12", LittleFS);
+    tft.loadFont("manrope-semibold12", LittleFS);
     tft.setTextDatum(BL_DATUM);
     tft.setTextWrap(true);
     tft.setSwapBytes(false);
@@ -1709,7 +1342,7 @@ void displaySpotify(){
 }
 
 void displayWeather(uint16_t color, uint16_t bg){
-  tft.loadFont("manrope-semibold12");
+  tft.loadFont("manrope-semibold12", LittleFS);
   tft.setSwapBytes(true);
 
   //1st Segment
@@ -1804,7 +1437,7 @@ void refreshDisplay(){
           tft.fillScreen(TFT_BLACK);
           //tft.fillScreen(TFT_DARKGREY);
           prefs.putChar("lastFace", currDisplayFace);
-          spotifyTimer.setInterval(spotifyLongt);
+          //spotifyTimer.setInterval(spotifyLongt);
           //drawPixelFrame(5);
 
           //drawing the fixed frames
@@ -1832,8 +1465,11 @@ void refreshDisplay(){
           prevDisplayFace = currDisplayFace;
           tft.fillScreen(TFT_BLACK);
           prefs.putChar("lastFace", currDisplayFace);
-          spotifyTimer.setInterval(spotifyLongt);
+          //spotifyTimer.setInterval(spotifyLongt);
           displayWeather(color, bg);
+          //stop pc info update if it was ongoing
+          if(pcInfoTimer.isRunning())
+            pcInfoTimer.stop();
         }
         break;
       }
@@ -1857,6 +1493,10 @@ void refreshDisplay(){
       case OTA_FACE:{
         if(currDisplayFace != prevDisplayFace){
           prevDisplayFace = currDisplayFace;
+          if(onBattery)
+            spotifyTimer.setInterval(spotifyLongt*3);
+          else
+            spotifyTimer.setInterval(spotifyLongt);
           tft.fillScreen(TFT_BLACK);
           displayOTA();
         }
@@ -1945,12 +1585,6 @@ void hourlyTask(){
   }
 }
 
-// void afterBoot(){
-//   getApiWeatherCurrent();
-//   getApiWeather3HrForecast();
-//   getApiWeatherDailyForecast();
-// }
-
 //////////////////////////////////////////////////////
 //
 //                SETUP
@@ -1987,11 +1621,6 @@ void setup(){
     while (1) delay(10);
   }
 
-  //for brightness control of tft screen, we will use pwm
-  // analogWriteRange(40);
-  // analogWriteFreq(48); //lowered from 72
-  //analogWrite(tftPow,tftBrightness);
-
   //initiate TFT display
   tft.init();
   tft.setRotation(rotation);
@@ -2005,7 +1634,7 @@ void setup(){
   attachInterrupt(digitalPinToInterrupt(btnInput), checkClicks, CHANGE);
 
   button.attachClick(singleClick);
-  // button.attachDoubleClick(doubleClick);
+  button.attachDoubleClick(doubleClick);
   // button.attachMultiClick(multiClick);
   button.setPressMs(400); // that is the time when LongPressStart is called
   button.attachLongPressStart(longPressStart);
@@ -2085,7 +1714,6 @@ void setup(){
     server.on("/callback", handleCallbackPage);      //Which routine to handle at root location
     server.begin();                  //Start server
     Serial.println("HTTP server started");
-    //tft.println(WiFi.localIP());
   }
   else
     serverOn = false;
@@ -2110,6 +1738,7 @@ void setup(){
   hourlyTimer.setInterval(5000);
   refreshInternetTimer.setInterval(internetUpdatet);
   refreshInternetTimer.setCallback(checkInternet);
+  pcInfoTimer.setCallback(getPcInfo);
   // baseTimer.setInterval(5000,1);
   // baseTimer.setCallback(afterBoot);
 
@@ -2135,7 +1764,9 @@ void loop(){
       refreshTimeTimer.setInterval(timeUpdatet*3);
       refreshSensorTimer.setInterval(sensorsUpdatet*3);
       refreshDisplayTimer.setInterval(displayUpdatet*2);
-      if(currDisplayFace != OTA_FACE)
+      if(currDisplayFace == SPOTIFY_FACE)
+        spotifyTimer.setInterval(spotifyShortt*2);
+      else
         spotifyTimer.setInterval(spotifyLongt*3);
       rdsTimer.setInterval(rdst*3);
       weatherTimer.setInterval(weathert*3);
@@ -2145,7 +1776,9 @@ void loop(){
       refreshTimeTimer.setInterval(timeUpdatet);
       refreshSensorTimer.setInterval(sensorsUpdatet);
       refreshDisplayTimer.setInterval(displayUpdatet);
-      if(currDisplayFace != OTA_FACE)
+      if(currDisplayFace ==SPOTIFY_FACE)
+        spotifyTimer.setInterval(spotifyShortt);
+      else
         spotifyTimer.setInterval(spotifyLongt);
       rdsTimer.setInterval(rdst); 
       weatherTimer.setInterval(weathert);
@@ -2155,17 +1788,6 @@ void loop(){
 
   MDNS.update();
   if(currDisplayFace != OTA_FACE){
-    // if(refreshTime){
-    //   refreshTimeFromRTC();
-    //   refreshTime = false;
-    // }
-
-    // if(refreshSensors){
-    //   refreshSensors = false;
-    // }
-    
-    // if(refreshDisplay){  
-    // }
     
     if( !isTimeSetFromNTP && WiFi.status() == WL_CONNECTED) { // TODO: find way to reduce checking rate if rtc is already set
       if(internetAvailable){
@@ -2179,44 +1801,11 @@ void loop(){
       }
     }
     
-    // if(sec5over){
-    //   //unsigned long time = millis();
-    //   if(currDisplayFace == SPOTIFY_FACE && spotifyConnection.accessTokenSet){
-    //     spotifyConnection.getTrackInfo();
-    //   }
-    //   //Serial.println(millis()-time);
-    //   sec5over = false;
-    // }
-    
-    // if(sec10over){
-    //   if(currDisplayFace != SPOTIFY_FACE && spotifyConnection.accessTokenSet){
-    //     spotifyConnection.getTrackInfo();
-    //   }
-    //   sec10over = false;
-    // }
-    
-    // if(min1over){  
-    //   min1over=false;
-    // }
-
-    // if(min5over){
-    //   //getApiWeather();
-    //   //unsigned long time = millis();
-    //   }
-    //   //Serial.print("\nFinished in ");
-    //   //Serial.println(millis()-time);
-    // }
-
-    //need to handle multiple time consuming tasks at hour end, so using hourTaskCount to do them one at a time
-    // if(prevHour != now.hour() && checkInternet()){
-    // }
-    if(spotifyConnection.accessTokenSet){
-      if(serverOn)
-        serverOn = false;
-    }
-    else
+    //handle server client only if network is available AND (spotify token has not been set OR connected to wall power)
+    // if(internetAvailable && !(spotifyConnection.accessTokenSet && onBattery))
+    if(internetAvailable && !spotifyConnection.accessTokenSet)
       server.handleClient();
-    
+
     TimerManager::instance().update();
   }
   else{
@@ -2224,23 +1813,10 @@ void loop(){
     ArduinoOTA.handle();
   }
 
-  delay(100);
+  delay(50);
   // baseTimer.update();
   button.tick();
   //Serial.println(ticks);
 
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
