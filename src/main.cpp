@@ -81,7 +81,7 @@
 //
 //////////////////////////////////////////////////////
 
-//pins
+//display and input pins
 const uint8_t tftPow = 16,//3
               tftRST = 2, 
               tftCS = 0,
@@ -92,45 +92,58 @@ const uint8_t tftPow = 16,//3
               extIntrpt = 16,
               batteryPin = 17; //3
 
-bool  isTimeSetFromNTP = false,
-      internetAvailable = false,
-      weatherUpdated = false,
-      sensorUpdated = false,
-      updateDot = false,
-      onBattery = false,
-      prevOnBattery = false;
+//flag to see if time has been set from online source
+bool  isTimeSetFromNTP = false;
+//flag to see if internet is available, updated regularly
+bool  internetAvailable = false;
+//flag to see if weather is updated, updated regularly
+bool  weatherUpdated = false;
+//flag to see if weather and battery sensors is updated, updated regularly
+bool  sensorUpdated = false;
+//flag to see if esp has hanged or not, internel debug
+bool  updateDot = false;
+//flag indicating if device is on battery or not
+bool  onBattery = false;
+//flag indicating previous battery set
+bool  prevOnBattery = false;
 
-unsigned long lastInternetRefresh = 0,
-      checkInternetInterval = 60000;
+//display update interval in ms
+const uint32_t displayUpdatet =       5*1000;
+//sensor update interval in ms
+const uint32_t sensorsUpdatet =       5*1000;
+//rtc to esp time update interval in ms
+const uint32_t timeUpdatet =             500;
+//spotify update on live power interval in ms
+const uint32_t spotifyLongt =        10*1000;
+//spotify update on battery interval in ms
+const uint32_t spotifyShortt =        5*1000;
+//RDS data upload interval in ms
+const uint32_t rdst =              5*60*1000;
+//current weather update interval in ms
+const uint32_t weathert =          5*60*1000;
+//internet connection update interval in ms
+const uint32_t internetUpdatet =   2*60*1000;
 
-//update timeframes in ms
-const uint32_t displayUpdatet = 5*1000, //was 2000
-         sensorsUpdatet =       5*1000,
-         timeUpdatet =             500,
-         spotifyLongt =        10*1000,
-         spotifyShortt =        5*1000,
-         rdst =              5*60*1000,
-         weathert =          5*60*1000,
-         internetUpdatet =   2*60*1000;
-
+//various timers for regular function calls
 Timer baseTimer, refreshTimeTimer, refreshSensorTimer, hourlyTimer,
       refreshDisplayTimer, spotifyTimer, rdsTimer, weatherTimer, refreshInternetTimer,
       pcInfoTimer;
 
-uint8_t currDisplayFace = 1,
-        prevDisplayFace = -1,
-        tftBrightness = 39,
-        rotation = 2,
-        prevMinute = 100,
-        prevHour = 100,
-        hourTaskCount = 0;
+//var to keep track of currently displayed face
+uint8_t currDisplayFace = 1;
+//var to force display updates on button press
+uint8_t prevDisplayFace = -1;
+//display rotation state
+uint8_t rotation = 2;
+//var to update time on minutes change
+uint8_t prevMinute = 100;
+//var to update time on hour change
+uint8_t prevHour = 100;
+//var to keep track of hour tasks execution
+uint8_t hourTaskCount = 0;
 
 //count no. of external interrupts
-volatile uint16_t ticks = 0;
-
-unsigned long pressStartTime,
-              inputStartTime,
-              inputWaitTime = 2000;
+// volatile uint16_t ticks = 0;
 
 OneButton button;
 
@@ -316,7 +329,7 @@ void doubleClick() {
 
 // this function will be called when the button was pressed multiple times in a short timeframe.
 void multiClick() {
-  inputStartTime = millis();
+  // inputStartTime = millis();
   int n = button.getNumberClicks();
   if (n == 3) {
     Serial.println("tripleClick detected.");
@@ -332,9 +345,9 @@ void multiClick() {
 
 // this function will be called when the button was held down for 1 second or more.
 void longPressStart() {
-  inputStartTime = millis();
+  // inputStartTime = millis();
   Serial.println("pressStart()");
-  pressStartTime = millis() - 1000; // as set in setPressMs()
+  // pressStartTime = millis() - 1000; // as set in setPressMs()
 } // pressStart()
 
 // long press button to force refresh RTC from NTP
@@ -1805,6 +1818,10 @@ void loop(){
     // if(internetAvailable && !(spotifyConnection.accessTokenSet && onBattery))
     if(internetAvailable && !spotifyConnection.accessTokenSet)
       server.handleClient();
+    else if(serverOn){
+      serverOn = false;
+      server.stop();
+    }
 
     TimerManager::instance().update();
   }
