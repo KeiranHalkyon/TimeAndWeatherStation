@@ -16,6 +16,7 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap);
 String getValue(HTTPClient &http, String key);
 void printSplitString(String text,int maxLineSize, int xPos, int yPos);
 void printSplitString2(char text[], int maxLineSize, int xPos, int yPos);
+bool getFile(String url, String filename);
 void handleRoot();
 void handleCallbackPage();
 void handleData();

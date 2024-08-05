@@ -71,7 +71,6 @@
 #include <timerManager.h>
 
 #include "user_constants.hpp"
-#include "Web_Fetch.h"
 #include "index.h"
 #include "iconsA.h"
 #include "main.h"
@@ -171,13 +170,12 @@ char currentDescAPI[33], currentSummaryAPI[100], currentIconAPI[4],
   forecastHourDescAPI[FORECAST_RANGE][33], forecastHourIconAPI[FORECAST_RANGE][4],
   tomorrowSummaryAPI[100];
 
-// The parameters are  RST pin, BUS number, CS pin, DC pin, FREQ (0 means default), CLK pin, MOSI pin
-//DisplayST7735_128x160x16_SPI displayTFT(tftRST,{-1, tftCS, tftDC, 0, tftCLK, tftMOSI}); //max freq tested 6000000
 TFT_eSPI tft = TFT_eSPI();
 Preferences prefs;
 
 ESP8266WebServer server(80);
-//SpotConn spotifyConnection;
+std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
+HTTPClient https;
 
 bool serverOn = true;
 
@@ -236,6 +234,7 @@ IRAM_ATTR void checkClicks(){
 
 void refreshTimeFromRTC(){
   now = rtc.now();
+  // Serial.println(ESP.getFreeHeap());
 }
 
 void setRTCfromNTP(){ //set time to rtc from ntp, using unix timestamp, begins the timeclient to update, stops the timeclient after update is done
@@ -315,7 +314,7 @@ void doubleClick() {
     //if internet is available
     if(displayDefaultState >=0){
       displayDefaultState = -3;
-      pcInfoTimer.setInterval(10*1000);
+      pcInfoTimer.start();
       pcInfoUpdated = true; //so that the screen is updated immediately
     }
     //if PC info is already shown, revert back to default
@@ -346,14 +345,22 @@ void multiClick() {
 // this function will be called when the button was held down for 1 second or more.
 void longPressStart() {
   // inputStartTime = millis();
-  Serial.println("pressStart()");
-  // pressStartTime = millis() - 1000; // as set in setPressMs()
+  if(currDisplayFace == DEFAULT_FACE){
+    Serial.println("Resetting time from NTP");
+    setRTCfromNTP();
+  }
+  else if(currDisplayFace == WEATHER_SUMMARY_FACE){
+    currDisplayFace = DEFAULT_FACE;
+    refreshDisplay();
+    displayDefaultState = -3;
+    pcInfoTimer.start();
+    refreshDisplay();
+  }
 } // pressStart()
 
 // long press button to force refresh RTC from NTP
 void longPressStop() {
-  Serial.println("Resetting time from NTP");
-  setRTCfromNTP();
+  Serial.println("Long press stop");
 }
 
 void duringLongPress(){
@@ -364,7 +371,7 @@ String removeBackslash(String text){
   String result;
   result.reserve(text.length()+1);
 
-  for(int i = 0; i < text.length(); i++){
+  for(uint32_t i = 0; i < text.length(); i++){
     char ch = text.charAt(i);
     if(ch == '\\')
       continue;
@@ -412,7 +419,7 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap){
 
 String getValue(HTTPClient &http, String key) {
   bool found = false, look = false, seek = true;
-  int ind = 0;
+  uint32_t ind = 0;
   String ret_str = "";
 
   int len = http.getSize();
@@ -490,7 +497,7 @@ void printSplitString(String text,int maxLineSize, int xPos, int yPos)
     sprintf(part,text.substring(currentWordStart,text.length()).c_str());
     // Serial.println(ESP.getFreeHeap());
     currentWordStart = spaceIndex;
-    size_t counter = 0;
+    int counter = 0;
     currentWordStart = 0;
     tft.setCursor(xPos,yPos);
     while(counter <= spacedCounter){
@@ -557,29 +564,94 @@ void printSplitString2(char text[], int maxLineSize, int xPos, int yPos){
   }
 }
 
+// Fetch a file from the URL given and save it in LittleFS
+// Return 1 if a web fetch was needed or 0 if file already exists
+bool getFile(String url, String filename) {
+
+  // If it exists then no need to fetch it
+  if (LittleFS.exists(filename) == true) {
+    Serial.println("Found " + filename);
+    return 0;
+  }
+
+  Serial.println("Downloading "  + filename + " from " + url);
+
+  // Check WiFi connection
+  if ((WiFi.status() == WL_CONNECTED)) {
+
+    //Serial.print("[HTTP] begin...\n");
+    // std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
+    // client -> setInsecure();
+    // HTTPClient http;
+    https.begin(*client, url);
+
+    //Serial.print("[HTTP] GET...\n");
+    // Start connection and send HTTP header
+    int httpCode = https.GET();
+    if (httpCode == 200) {
+      fs::File f = LittleFS.open(filename, "w+");
+      if (!f) {
+        Serial.println("file open failed");
+        return 0;
+      }
+      // HTTP header has been send and Server response header has been handled
+      //Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+
+      // File found at server
+      if (httpCode == HTTP_CODE_OK) {
+
+        // Get length of document (is -1 when Server sends no Content-Length header)
+        int total = https.getSize();
+        int len = total;
+
+        // Create buffer for read
+        uint8_t buff[128] = { 0 };
+
+        // Get tcp stream
+        WiFiClient * stream = https.getStreamPtr();
+
+        // Read all data from server
+        while (https.connected() && (len > 0 || len == -1)) {
+          // Get available data size
+          size_t size = stream->available();
+
+          if (size) {
+            // Read up to 128 bytes
+            int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+
+            // Write it to file
+            f.write(buff, c);
+
+            // Calculate remaining bytes
+            if (len > 0) {
+              len -= c;
+            }
+          }
+          yield();
+        }
+        //Serial.println();
+        //Serial.print("[HTTP] connection closed or file end.\n");
+      }
+      f.close();
+      //Serial.println("File Closed");
+    }
+    else {
+      Serial.printf("[HTTP] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+    }
+    https.end();
+    // client->stop();
+  }
+  return 1; // File was fetched from web
+}
+
+
 //Create spotify connection class
 class SpotConn {
 public:
-  SpotConn(){
-      // client = std::make_unique<BearSSL::WiFiClientSecure>();
-      // client->setInsecure();
-  }
-  // httpResponse makeSpotifyRequest(const char* URI, const char** headers, int numHeaders, const char* RequestBody){
-  //     https.begin(*client,URI);
-  //     for(;numHeaders>0;numHeaders--,headers += 2){
-  //         https.addHeader(*headers,*(headers+1));
-  //     }
-  //     struct httpResponse res;
-  //     res.responseCode = https.POST(RequestBody);
-  //     res.responseMessage = https.getString()
-  //     https.end();
-  //     return res;
-  // }
-
   bool getUserCode(String serverCode) {
-      std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
+      // std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
       client->setInsecure();
-      HTTPClient https;
+      // HTTPClient https;
 
       https.begin(*client,"https://accounts.spotify.com/api/token");
       String auth = "Basic " + base64::encode(String(CLIENT_ID) + ":" + String(CLIENT_SECRET));
@@ -608,10 +680,11 @@ public:
       }
       // Disconnect from the Spotify API
       https.end();
+      // client->stop();
       return accessTokenSet;
   }
   bool refreshAuth(){
-      std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
+      // std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
       client->setInsecure();
       HTTPClient https;
 
@@ -647,12 +720,13 @@ public:
       }
       // Disconnect from the Spotify API
       https.end();
+      // client->stop();
       return accessTokenSet;
   }
   bool getTrackInfo(){
-      std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
+      // std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
       client->setInsecure();
-      HTTPClient https;
+      // HTTPClient https;
 
       String url = "https://api.spotify.com/v1/me/player/currently-playing";
       https.useHTTP10(true);
@@ -688,14 +762,7 @@ public:
           songId = getValue(https,"uri");
           String isPlay = getValue(https, "is_playing");
           isPlaying = isPlay == "true";
-          //Serial.println(isPlay);
-          // Serial.println(songId);
           songId = songId.substring(15,songId.length()-1);
-          // Serial.println(songId);
-          //Serial.println(ESP.getFreeHeap());
-          https.end();
-          //Serial.println(ESP.getFreeHeap());
-          // listLittleFS();
           if (songId != currentSong.Id){ 
             if(LittleFS.exists("/albumArt.jpg") == true) {
                 LittleFS.remove("/albumArt.jpg");
@@ -723,22 +790,18 @@ public:
           https.end();
       }
       
-      
-      // Disconnect from the Spotify API
-      // if(success){
-      //     drawScreen(refresh);
-      //     lastSongPositionMs = currentSongPositionMs;
-      // }
       if(isAvailable != success){
         stateChanged = true;
         isAvailable = success;
       }
+      https.end();
+      // client->stop();
       return success;
   }
   bool findLikedStatus(String songId){
-      std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
+      // std::unique_ptr<BearSSL::WiFiClientSecure>client(std::make_unique<BearSSL::WiFiClientSecure>());
       client->setInsecure();
-      HTTPClient https;
+      // HTTPClient https;
 
       String url = "https://api.spotify.com/v1/me/tracks/contains?ids="+songId;
       https.begin(*client,url);
@@ -750,19 +813,18 @@ public:
       // Check if the request was successful
       if (httpResponseCode == 200) {
           String response = https.getString();
-          https.end();
           return(response == "[ true ]");
       } else {
           Serial.print("Error toggling liked songs: ");
           Serial.println(httpResponseCode);
           String response = https.getString();
           Serial.println(response);
-          https.end();
       }
 
       
       // Disconnect from the Spotify API
-      
+      https.end();
+      // client->stop();
       return success;
   }
   
@@ -831,9 +893,9 @@ void handleCallbackPage() {
 
 bool sendDataToRDS(float tbmp, float pbmp,float taht, float haht){
   //unsigned long times = millis();
-  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+  // std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
-  HTTPClient https;
+  // HTTPClient https;
 
   //String completeRequest = rdsUrl+"tempBMP="+String(tbmp,2)+"&pressBMP="+String(pbmp,2)+"&tempAHT="+String(taht,2)+"&humAHT="+String(haht,2);
   //Serial.println(pbmp);
@@ -847,13 +909,14 @@ bool sendDataToRDS(float tbmp, float pbmp,float taht, float haht){
 
   //Serial.printf("Response : %d\nMessage : %s\nTime taken in ms : %d",responseCode,https.getString().c_str(),millis()-times);
   https.end();
+  // client->stop();
   return (responseCode == 200);
 }
 
 bool getApiWeatherCurrent(){
-  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+  // std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
-  HTTPClient https;
+  // HTTPClient https;
   int httpCode = -1;
 
   char completeRequest[140];
@@ -891,13 +954,14 @@ bool getApiWeatherCurrent(){
     Serial.printf("[HTTPS] Unable to connect\n");
   }
   https.end();
+  // client->stop();
   return (httpCode == 200);
 }
 
 bool getApiWeather3HrForecast(){
-  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+  // std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
-  HTTPClient https;
+  // HTTPClient https;
   int httpCode = -1;
 
   char completeRequest[135];
@@ -929,13 +993,14 @@ bool getApiWeather3HrForecast(){
     Serial.printf("[HTTPS] Unable to connect\n");
   }
   https.end();
+  // client->stop();
   return (httpCode == 200);
 }
 
 bool getApiWeatherDailyForecast(){
-  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+  // std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
-  HTTPClient https;
+  // HTTPClient https;
   int httpCode = -1;
 
   char completeRequest[160];
@@ -970,6 +1035,7 @@ bool getApiWeatherDailyForecast(){
     Serial.printf("[HTTPS] Unable to connect\n");
   }
   https.end();
+  // client->stop();
   return (httpCode == 200);
 }
 
@@ -977,16 +1043,17 @@ void getPcInfo(){
   if(!internetAvailable)
     return;
   
-  WiFiClient client;
-  HTTPClient http;
+  client->stop();
+  WiFiClient clientnow;
   int httpCode = -1;
 
-  if (http.begin(client, pcServer)) {  // HTTPS
-    httpCode = http.GET();
+  Serial.println("Starting pc info update");
+  if (https.begin(clientnow, pcServer)) {  
+    httpCode = https.GET();
     if (httpCode > 0) {
       if (httpCode == HTTP_CODE_OK) {
         JsonDocument doc;
-        deserializeJson(doc, http.getStream());
+        deserializeJson(doc, https.getStream());
 
         pcCpuTemp = doc["cpuTemp"];
         pcCpuLoad = doc["cpuLoad"];
@@ -999,16 +1066,21 @@ void getPcInfo(){
         pcFPS = doc["framerate"];
         pcFrameTime = doc["frametime"];
 
-        pcInfoUpdated = true;
         doc.clear();
+
+        pcInfoUpdated = true;
+        Serial.println("pc info update successful");
       }
     } else {
-      Serial.printf("[HTTPS] GET... failed PCINFO, error: %s\n", http.errorToString(httpCode).c_str());
+      Serial.printf("[HTTPS] GET... failed PCINFO, error: %s\n", https.errorToString(httpCode).c_str());
     }
   } else {
     Serial.printf("[HTTPS] Unable to connect\n");
   }
-  http.end();
+  https.end();
+  // clientnow.stop();
+  delay(50);
+  // client.stop();
   // return (httpCode == 200);
 }
 
@@ -1017,16 +1089,6 @@ unsigned long myAbs(long val){
 }
 
 void checkInternet(){ // param : bool force = false
-  // if(force)
-  //   return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
-  // else if(internetAvailable && WiFi.isConnected())
-  //   return true;
-  // else if(WiFi.isConnected() && (myAbs(millis()-lastInternetRefresh) > checkInternetInterval || !rtc.isrunning())){
-  //   lastInternetRefresh = millis();
-  //   return internetAvailable = Ping.ping(String(remote_host).c_str(),1);
-  // }
-  // else
-  //   return false;
   if(WiFi.status() == WL_CONNECTED)
     internetAvailable = Ping.ping(String(remote_host).c_str(),1);
   else
@@ -1138,14 +1200,9 @@ void displayDefault(uint16_t color, uint16_t bg, bool refresh){
       weatherUpdated = false;
     }
 
-    // if(displayDefaultState < 0)
-    //   displayDefaultState = 0;
     //show notif on song change
     if(spotifyConnection.stateChanged && spotifyConnection.isAvailable){
       tft.fillRect(0, 93, 127, 68, bg);  // description + temps frame
-      //tft.loadFont("manrope-semibold12", LittleFS);
-      // char temp[50];
-      // sprintf(temp,"%s",spotifyConnection.currentSong.artist);
       printSplitString(spotifyConnection.currentSong.artist, 15, 3, 109);
       printSplitString(spotifyConnection.currentSong.song, 20, 3, (tft.getCursorY() > 124)? tft.getCursorY()+4 : 124);
       tft.setSwapBytes(true);
@@ -1412,6 +1469,7 @@ void displayWeather(uint16_t color, uint16_t bg){
   tft.pushImage(98, 133, 25, 25, getIcon(forecastHourIconAPI[4]));
 
   tft.setSwapBytes(false);
+  tft.unloadFont();
 }
 
 void displayOTA(){
@@ -1649,6 +1707,7 @@ void setup(){
   button.attachClick(singleClick);
   button.attachDoubleClick(doubleClick);
   // button.attachMultiClick(multiClick);
+  button.setClickMs(100);
   button.setPressMs(400); // that is the time when LongPressStart is called
   button.attachLongPressStart(longPressStart);
   button.attachLongPressStop(longPressStop);
@@ -1656,13 +1715,6 @@ void setup(){
   // //perhaps use long press instead of double click
   // button.attachDuringLongPress(duringLongPress);
   // button.setLongPressIntervalMs(1200);
-
-  //setup external interrupt from ds1307
-  //pinMode(extIntrpt, INPUT_PULLDOWN_16);
-  //attachInterrupt(digitalPinToInterrupt(extIntrpt), checkTicks, CHANGE);
-
-  // if(rtc.readSqwPinMode() != DS1307_SquareWave1HZ)
-  //   rtc.writeSqwPinMode(DS1307_SquareWave1HZ);
 
   if(rtc.readSqwPinMode() != DS1307_OFF)
     rtc.writeSqwPinMode(DS1307_OFF);
@@ -1682,9 +1734,6 @@ void setup(){
   
   //Setup Arduino OTA
   ArduinoOTA.onStart([]() {
-    //detach btn and rtc interrupt
-    detachInterrupt(digitalPinToInterrupt(btnInput));
-    detachInterrupt(digitalPinToInterrupt(extIntrpt));
     tft.println("Starting update...");
 
     if(ArduinoOTA.getCommand() == U_FLASH){
@@ -1700,14 +1749,13 @@ void setup(){
   ArduinoOTA.onError([](ota_error_t error) {
     Serial.printf("Error[%u]", error);
     tft.printf("Error %u",error);
-
-    //Reattach interupts
-    // attachInterrupt(digitalPinToInterrupt(btnInput), checkTicks, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(extIntrpt), checkClicks, CHANGE);
   });
   ArduinoOTA.setHostname("esp8266");
   // ArduinoOTA.setPassword("123");
   ArduinoOTA.begin();
+
+  //setup wifi client buffer size
+  client->setBufferSizes(7168, 2024);
 
   prefs.begin("spotify");
 
@@ -1752,10 +1800,12 @@ void setup(){
   refreshInternetTimer.setInterval(internetUpdatet);
   refreshInternetTimer.setCallback(checkInternet);
   pcInfoTimer.setCallback(getPcInfo);
+  pcInfoTimer.setInterval(10*1000); // TODO : put interval into variable
   // baseTimer.setInterval(5000,1);
   // baseTimer.setCallback(afterBoot);
 
   TimerManager::instance().start();
+  pcInfoTimer.stop(); // stop this particular timer as it will be controlled from doubleClick()
   //delay(2000);
   //hourlyTask();
   //updateWeather();
